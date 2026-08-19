@@ -53,7 +53,9 @@ export const serviceCategories = pgTable("service_categories", {
 
 export const services = pgTable("services", {
   id: id(),
-  categoryId: text("category_id").notNull().references(() => serviceCategories.id),
+  categoryId: text("category_id")
+    .notNull()
+    .references(() => serviceCategories.id),
   name: text("name").notNull(),
   description: text("description"),
   priceMin: real("price_min").notNull(),
@@ -67,7 +69,9 @@ export const services = pgTable("services", {
 
 export const serviceVariations = pgTable("service_variations", {
   id: id(),
-  serviceId: text("service_id").notNull().references(() => services.id),
+  serviceId: text("service_id")
+    .notNull()
+    .references(() => services.id),
   label: text("label").notNull(),
   price: real("price").notNull(),
   isDefault: boolean("is_default").notNull().default(false),
@@ -76,14 +80,20 @@ export const serviceVariations = pgTable("service_variations", {
 
 export const stylistServices = pgTable("stylist_services", {
   id: id(),
-  stylistId: text("stylist_id").notNull().references(() => users.id),
-  serviceId: text("service_id").notNull().references(() => services.id),
+  stylistId: text("stylist_id")
+    .notNull()
+    .references(() => users.id),
+  serviceId: text("service_id")
+    .notNull()
+    .references(() => services.id),
 });
 
 /** ---------- STYLIST AVAILABILITY ---------- */
 export const availability = pgTable("availability", {
   id: id(),
-  stylistId: text("stylist_id").notNull().references(() => users.id),
+  stylistId: text("stylist_id")
+    .notNull()
+    .references(() => users.id),
   dayOfWeek: integer("day_of_week").notNull(),
   startTime: text("start_time").notNull(),
   endTime: text("end_time").notNull(),
@@ -93,20 +103,63 @@ export const availability = pgTable("availability", {
 /** ---------- APPOINTMENTS ---------- */
 export const appointments = pgTable("appointments", {
   id: id(),
+
   customerId: text("customer_id").references(() => users.id),
+
   customerName: text("customer_name").notNull(),
   customerPhone: text("customer_phone").notNull(),
-  serviceId: text("service_id").notNull().references(() => services.id),
-  variationId: text("variation_id").references(() => serviceVariations.id),
+
+  /**
+   * Legacy / primary service reference.
+   *
+   * This is kept for compatibility with the existing admin,
+   * stylist, account and reporting screens while the system
+   * transitions to multi-service appointments.
+   *
+   * For a multi-service booking this contains the first service.
+   */
+  serviceId: text("service_id")
+    .notNull()
+    .references(() => services.id),
+
+  /**
+   * Legacy / primary variation reference.
+   *
+   * For multi-service bookings, individual variations are stored
+   * in appointmentServices.
+   */
+  variationId: text("variation_id").references(
+    () => serviceVariations.id
+  ),
+
   stylistId: text("stylist_id").references(() => users.id),
+
   scheduledDate: text("scheduled_date").notNull(),
   scheduledTime: text("scheduled_time").notNull(),
+
+  /**
+   * Total duration of the complete booking.
+   *
+   * Example:
+   * Hair Wash = 30 min
+   * Braids = 120 min
+   * Total = 150 min
+   */
   durationMinutes: integer("duration_minutes").notNull(),
+
+  /**
+   * Total estimated price for every selected service.
+   */
   priceEstimate: real("price_estimate").notNull(),
+
   instructions: text("instructions"),
+
   source: text("source", {
     enum: ["online", "walk_in", "qr"],
-  }).notNull().default("online"),
+  })
+    .notNull()
+    .default("online"),
+
   status: text("status", {
     enum: [
       "pending",
@@ -117,55 +170,135 @@ export const appointments = pgTable("appointments", {
       "cancelled",
       "no_show",
     ],
-  }).notNull().default("pending"),
+  })
+    .notNull()
+    .default("pending"),
+
   customerArrivedAt: text("customer_arrived_at"),
   arrivalLocationVerified: boolean("arrival_location_verified"),
+
   serviceStartedAt: text("service_started_at"),
   serviceCompletedAt: text("service_completed_at"),
+
   paymentStatus: text("payment_status", {
     enum: ["pending", "partial", "paid", "refunded", "disputed"],
-  }).notNull().default("pending"),
+  })
+    .notNull()
+    .default("pending"),
+
   createdAt: createdAt(),
 });
 
+/**
+ * ---------- APPOINTMENT SERVICES ----------
+ *
+ * This is the important new table for MULTIPLE SERVICES
+ * inside one booking.
+ *
+ * One appointment can now contain:
+ *
+ * Appointment
+ *   ├── Braids
+ *   ├── Hair Wash
+ *   └── Treatment
+ *
+ * while still remaining ONE appointment.
+ */
+export const appointmentServices = pgTable("appointment_services", {
+  id: id(),
+
+  appointmentId: text("appointment_id")
+    .notNull()
+    .references(() => appointments.id),
+
+  serviceId: text("service_id")
+    .notNull()
+    .references(() => services.id),
+
+  variationId: text("variation_id").references(
+    () => serviceVariations.id
+  ),
+
+  /**
+   * Price of this particular service at the time of booking.
+   *
+   * We store the price here so that changing the catalogue
+   * price later does not change historical appointments.
+   */
+  price: real("price").notNull(),
+
+  /**
+   * Duration of this particular service at the time of booking.
+   */
+  durationMinutes: integer("duration_minutes").notNull(),
+
+  /**
+   * Keeps the order in which the customer selected the services.
+   */
+  sortOrder: integer("sort_order").notNull().default(0),
+
+  createdAt: createdAt(),
+});
+
+/** ---------- APPOINTMENT STATUS HISTORY ---------- */
 export const appointmentStatusHistory = pgTable(
   "appointment_status_history",
   {
     id: id(),
+
     appointmentId: text("appointment_id")
       .notNull()
       .references(() => appointments.id),
+
     status: text("status").notNull(),
+
     changedByUserId: text("changed_by_user_id"),
+
     changedByRole: text("changed_by_role"),
+
     note: text("note"),
+
     timestamp: createdAt(),
   }
 );
 
+/** ---------- CUSTOMER REFERENCES ---------- */
 export const customerReferences = pgTable("customer_references", {
   id: id(),
+
   appointmentId: text("appointment_id")
     .notNull()
     .references(() => appointments.id),
+
   url: text("url").notNull(),
+
   type: text("type", {
     enum: ["image", "video"],
   }).notNull(),
+
   uploadedAt: createdAt(),
 });
 
+/** ---------- COMPLETED WORK ---------- */
 export const completedWork = pgTable("completed_work", {
   id: id(),
+
   appointmentId: text("appointment_id")
     .notNull()
     .references(() => appointments.id),
+
   photoUrl: text("photo_url").notNull(),
+
   mediaType: text("media_type", {
     enum: ["image", "video"],
-  }).notNull().default("image"),
+  })
+    .notNull()
+    .default("image"),
+
   uploadedByUserId: text("uploaded_by_user_id").notNull(),
+
   uploadedAt: createdAt(),
+
   reviewStatus: text("review_status", {
     enum: [
       "pending_review",
@@ -173,32 +306,48 @@ export const completedWork = pgTable("completed_work", {
       "needs_review",
       "issue_reported",
     ],
-  }).notNull().default("pending_review"),
+  })
+    .notNull()
+    .default("pending_review"),
+
   reviewedByUserId: text("reviewed_by_user_id"),
+
   reviewNote: text("review_note"),
+
   reviewedAt: text("reviewed_at"),
 });
 
+/** ---------- CANCELLATIONS ---------- */
 export const cancellations = pgTable("cancellations", {
   id: id(),
+
   appointmentId: text("appointment_id")
     .notNull()
     .references(() => appointments.id),
+
   cancelledByUserId: text("cancelled_by_user_id"),
+
   cancelledByRole: text("cancelled_by_role").notNull(),
+
   reason: text("reason").notNull(),
+
   note: text("note"),
+
   timestamp: createdAt(),
 });
 
 /** ---------- QUEUE ---------- */
 export const queueEntries = pgTable("queue_entries", {
   id: id(),
+
   appointmentId: text("appointment_id")
     .notNull()
     .references(() => appointments.id),
+
   joinedAt: createdAt(),
+
   position: integer("position").notNull(),
+
   status: text("status", {
     enum: [
       "waiting",
@@ -208,20 +357,33 @@ export const queueEntries = pgTable("queue_entries", {
       "cancelled",
       "no_show",
     ],
-  }).notNull().default("waiting"),
+  })
+    .notNull()
+    .default("waiting"),
 });
 
 /** ---------- ATTENDANCE ---------- */
 export const attendance = pgTable("attendance", {
   id: id(),
-  staffId: text("staff_id").notNull().references(() => users.id),
+
+  staffId: text("staff_id")
+    .notNull()
+    .references(() => users.id),
+
   date: text("date").notNull(),
+
   scheduledStart: text("scheduled_start"),
+
   loginAt: text("login_at"),
+
   checkInAt: text("check_in_at"),
+
   checkInVerified: boolean("check_in_verified"),
+
   checkOutAt: text("check_out_at"),
+
   checkOutVerified: boolean("check_out_verified"),
+
   status: text("status", {
     enum: [
       "on_time",
@@ -230,14 +392,18 @@ export const attendance = pgTable("attendance", {
       "not_checked_in",
       "checked_out",
     ],
-  }).notNull().default("not_checked_in"),
+  })
+    .notNull()
+    .default("not_checked_in"),
 });
 
 export const attendanceEvents = pgTable("attendance_events", {
   id: id(),
+
   attendanceId: text("attendance_id")
     .notNull()
     .references(() => attendance.id),
+
   type: text("type", {
     enum: [
       "login",
@@ -246,26 +412,38 @@ export const attendanceEvents = pgTable("attendance_events", {
       "manual_correction",
     ],
   }).notNull(),
+
   timestamp: createdAt(),
+
   locationLat: real("location_lat"),
+
   locationLng: real("location_lng"),
+
   verified: boolean("verified"),
+
   correctedByUserId: text("corrected_by_user_id"),
+
   originalValue: text("original_value"),
+
   newValue: text("new_value"),
+
   reason: text("reason"),
 });
 
 /** ---------- PAYMENTS ---------- */
 export const payments = pgTable("payments", {
   id: id(),
+
   appointmentId: text("appointment_id")
     .notNull()
     .references(() => appointments.id),
+
   amount: real("amount").notNull(),
+
   method: text("method", {
     enum: ["cash", "mobile_money", "card", "bank_transfer"],
   }).notNull(),
+
   status: text("status", {
     enum: [
       "pending",
@@ -274,54 +452,87 @@ export const payments = pgTable("payments", {
       "refunded",
       "disputed",
     ],
-  }).notNull().default("pending"),
+  })
+    .notNull()
+    .default("pending"),
+
   recordedByUserId: text("recorded_by_user_id"),
+
   note: text("note"),
+
   timestamp: createdAt(),
 });
 
 /** ---------- REVIEWS ---------- */
 export const reviews = pgTable("reviews", {
   id: id(),
+
   appointmentId: text("appointment_id")
     .notNull()
     .references(() => appointments.id),
+
   customerId: text("customer_id").references(() => users.id),
+
   overallRating: integer("overall_rating").notNull(),
+
   qualityRating: integer("quality_rating"),
+
   professionalismRating: integer("professionalism_rating"),
+
   communicationRating: integer("communication_rating"),
+
   respectfulnessRating: integer("respectfulness_rating"),
+
   punctualityRating: integer("punctuality_rating"),
+
   comment: text("comment"),
+
   moderated: boolean("moderated").notNull().default(false),
+
   hidden: boolean("hidden").notNull().default(false),
+
   createdAt: createdAt(),
 });
 
 /** ---------- NOTIFICATIONS ---------- */
 export const notifications = pgTable("notifications", {
   id: id(),
-  userId: text("user_id").notNull().references(() => users.id),
+
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id),
+
   type: text("type").notNull(),
+
   title: text("title").notNull(),
+
   body: text("body").notNull(),
+
   read: boolean("read").notNull().default(false),
+
   relatedAppointmentId: text("related_appointment_id"),
+
   createdAt: createdAt(),
 });
 
 /** ---------- STAFF RULES ---------- */
 export const staffRules = pgTable("staff_rules", {
   id: id(),
+
   category: text("category").notNull(),
+
   title: text("title").notNull(),
+
   body: text("body").notNull(),
+
   version: integer("version").notNull().default(1),
+
   requiresAcknowledgement: boolean("requires_acknowledgement")
     .notNull()
     .default(true),
+
   active: boolean("active").notNull().default(true),
+
   createdAt: createdAt(),
 });
 
@@ -329,9 +540,17 @@ export const staffRuleAcknowledgements = pgTable(
   "staff_rule_acknowledgements",
   {
     id: id(),
-    ruleId: text("rule_id").notNull().references(() => staffRules.id),
+
+    ruleId: text("rule_id")
+      .notNull()
+      .references(() => staffRules.id),
+
     ruleVersion: integer("rule_version").notNull(),
-    staffId: text("staff_id").notNull().references(() => users.id),
+
+    staffId: text("staff_id")
+      .notNull()
+      .references(() => users.id),
+
     acknowledgedAt: createdAt(),
   }
 );
@@ -339,68 +558,105 @@ export const staffRuleAcknowledgements = pgTable(
 /** ---------- AUDIT LOG ---------- */
 export const auditLogs = pgTable("audit_logs", {
   id: id(),
+
   userId: text("user_id"),
+
   userRole: text("user_role"),
+
   action: text("action").notNull(),
+
   entityType: text("entity_type").notNull(),
+
   entityId: text("entity_id"),
+
   beforeValue: text("before_value"),
+
   afterValue: text("after_value"),
+
   timestamp: createdAt(),
 });
 
 /** ---------- GALLERY ---------- */
 export const galleryImages = pgTable("gallery_images", {
   id: id(),
+
   category: text("category").notNull(),
+
   mediaUrl: text("media_url").notNull(),
+
   mediaType: text("media_type", {
     enum: ["image", "video"],
-  }).notNull().default("image"),
+  })
+    .notNull()
+    .default("image"),
+
   caption: text("caption"),
+
   sortOrder: integer("sort_order").notNull().default(0),
+
   active: boolean("active").notNull().default(true),
+
   uploadedByUserId: text("uploaded_by_user_id"),
+
   createdAt: createdAt(),
 });
 
 /** ---------- SALON SETTINGS ---------- */
 export const salonSettings = pgTable("salon_settings", {
   id: text("id").primaryKey().default("main"),
+
   name: text("name").notNull().default("Hairtopia Studio"),
+
   logoUrl: text("logo_url"),
+
   address: text("address").notNull().default("266 Afro Osro Street"),
+
   mapUrl: text("map_url"),
+
   latitude: real("latitude"),
+
   longitude: real("longitude"),
+
   phone: text("phone"),
+
   email: text("email").default("nikinuel@gmail.com"),
+
   instagram: text("instagram").default("@Hairtopia_Studio"),
+
   facebook: text("facebook").default("Hairtopia"),
+
   openTime: text("open_time").notNull().default("08:30"),
+
   closeTime: text("close_time").notNull().default("19:30"),
+
   checkInRadiusMeters: integer("check_in_radius_meters")
     .notNull()
     .default(100),
+
   attendanceGracePeriodMinutes: integer(
     "attendance_grace_period_minutes"
   )
     .notNull()
     .default(10),
+
   cancellationPolicy: text("cancellation_policy")
     .notNull()
     .default(
       "Please cancel at least 2 hours before your appointment where possible."
     ),
+
   noShowGraceMinutes: integer("no_show_grace_minutes")
     .notNull()
     .default(20),
+
   depositEnabled: boolean("deposit_enabled")
     .notNull()
     .default(false),
+
   depositPercent: integer("deposit_percent")
     .notNull()
     .default(20),
+
   bookingBufferMinutes: integer("booking_buffer_minutes")
     .notNull()
     .default(15),
