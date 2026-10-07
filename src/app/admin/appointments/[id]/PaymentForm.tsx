@@ -30,7 +30,7 @@ export function PaymentForm({
   const router = useRouter();
   const [amount, setAmount] = useState(priceEstimate);
   const [method, setMethod] = useState<"cash" | "mobile_money" | "card" | "bank_transfer">("cash");
-  const [status, setStatus] = useState<"pending" | "partial" | "paid" | "refunded" | "disputed">("paid");
+  const [paymentType, setPaymentType] = useState<"deposit" | "final" | "full">("full");
   const [note, setNote] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +40,7 @@ export function PaymentForm({
     e.preventDefault();
     setPending(true);
     setError(null);
-    const result = await recordPayment({ appointmentId, amount, method, status, note: note || undefined });
+    const result = await recordPayment({ appointmentId, amount, method, paymentType, note: note || undefined });
     setPending(false);
     if (!result.ok) return setError(result.error);
     setConfirmed(true);
@@ -88,12 +88,10 @@ export function PaymentForm({
           <option value="card">Card</option>
           <option value="bank_transfer">Bank Transfer</option>
         </Select>
-        <Select label="Status" value={status} onChange={(e) => setStatus(e.target.value as typeof status)}>
-          <option value="paid">Paid in full</option>
-          <option value="partial">Partially paid</option>
-          <option value="pending">Pending</option>
-          <option value="refunded">Refunded</option>
-          <option value="disputed">Disputed</option>
+        <Select label="Type" value={paymentType} onChange={(e) => setPaymentType(e.target.value as typeof paymentType)}>
+          <option value="full">Full payment</option>
+          <option value="deposit">Deposit</option>
+          <option value="final">Final balance</option>
         </Select>
         <Input label="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
         {error && <p className="text-sm text-rust">{error}</p>}

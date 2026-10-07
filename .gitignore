@@ -39,6 +39,10 @@ next-env.d.ts
 /data/*.db
 /data/*.db-*
 
+# private client photo storage (never served statically, never packaged)
+/private-uploads/*
+!/private-uploads/.gitkeep
+
 # uploads
 /public/uploads/*
 !/public/uploads/.gitkeep

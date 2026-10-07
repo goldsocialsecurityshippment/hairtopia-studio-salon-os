@@ -4,8 +4,13 @@ import { getCategoriesWithServices, getActiveStylists } from "@/lib/data/queries
 import { getCurrentUser } from "@/lib/actions/auth";
 import { BookingWizard } from "./BookingWizard";
 
-export default async function BookPage() {
-  const [categories, stylists, user] = await Promise.all([
+export default async function BookPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ stylist?: string }>;
+}) {
+  const [{ stylist: preselectedStylistId }, categories, stylists, user] = await Promise.all([
+    searchParams,
     getCategoriesWithServices(),
     getActiveStylists(),
     getCurrentUser(),
@@ -34,6 +39,7 @@ export default async function BookPage() {
             }))}
             defaultName={user?.role === "customer" ? user.name : ""}
             defaultPhone={user?.role === "customer" ? user.phone ?? "" : ""}
+            preselectedStylistId={preselectedStylistId ?? null}
           />
         </div>
       </main>

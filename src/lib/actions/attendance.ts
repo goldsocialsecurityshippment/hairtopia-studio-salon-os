@@ -50,7 +50,7 @@ export async function recordLogin(staffId: string) {
 }
 
 export async function checkIn(params: { lat?: number; lng?: number; locationDenied?: boolean }) {
-  const session = await requireRole("stylist", "manager", "owner");
+  const session = await requireRole("stylist", "manager", "owner", "admin");
   const row = await getOrCreateAttendanceRow(session.userId);
   if (row.checkInAt) {
     return { ok: false as const, error: "You've already checked in today." };
@@ -105,7 +105,7 @@ export async function checkIn(params: { lat?: number; lng?: number; locationDeni
 }
 
 export async function checkOut(params: { lat?: number; lng?: number }) {
-  const session = await requireRole("stylist", "manager", "owner");
+  const session = await requireRole("stylist", "manager", "owner", "admin");
   const row = await getOrCreateAttendanceRow(session.userId);
   if (!row.checkInAt) {
     return { ok: false as const, error: "You need to check in before checking out." };
@@ -149,7 +149,7 @@ export async function correctAttendance(params: {
   newValue: string;
   reason: string;
 }) {
-  const session = await requireRole("manager", "owner");
+  const session = await requireRole("manager", "owner", "admin");
   const [row] = await db.select().from(attendance).where(eq(attendance.id, params.attendanceId));
   if (!row) return { ok: false as const, error: "Attendance record not found." };
 

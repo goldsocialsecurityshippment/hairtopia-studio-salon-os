@@ -9,6 +9,8 @@ import { SiteFooter } from "@/components/SiteFooter";
 import { Badge, statusTone, statusLabel } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Button } from "@/components/ui/Button";
+import { PushToggle } from "@/components/PushToggle";
+import { NotificationPreferences } from "@/components/NotificationPreferences";
 
 export default async function AccountPage() {
   const user = await getCurrentUser();
@@ -44,6 +46,13 @@ export default async function AccountPage() {
           <div>
             <p className="text-xs font-medium uppercase tracking-wide2 text-bronze-500">My account</p>
             <h1 className="mt-2 font-display text-3xl text-ink">Hello, {user.name.split(" ")[0]}</h1>
+            <div className="mt-3">
+              <PushToggle />
+              <NotificationPreferences
+                userId={user.id}
+                relevantKeys={["bookingEvents", "reminderEvents", "paymentEvents", "consultationEvents", "cancellationEvents"]}
+              />
+            </div>
           </div>
           <div className="flex gap-3">
             <Link href="/book">

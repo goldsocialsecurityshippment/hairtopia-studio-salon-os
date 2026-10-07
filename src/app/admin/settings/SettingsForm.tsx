@@ -26,6 +26,12 @@ type Settings = {
   depositEnabled: boolean;
   depositPercent: number;
   bookingBufferMinutes: number;
+  depositMode: "flat" | "percent";
+  depositFlatAmount: number;
+  cancellationWindowHours: number;
+  overbookingAllowed: boolean;
+  overtimeAllowedMinutes: number;
+  lowStockDefaultThreshold: number;
 } | null;
 
 export function SettingsForm({ settings }: { settings: Settings }) {
@@ -49,6 +55,12 @@ export function SettingsForm({ settings }: { settings: Settings }) {
     depositEnabled: settings?.depositEnabled ?? false,
     depositPercent: settings?.depositPercent ?? 20,
     bookingBufferMinutes: settings?.bookingBufferMinutes ?? 15,
+    depositMode: settings?.depositMode ?? "flat",
+    depositFlatAmount: settings?.depositFlatAmount ?? 100,
+    cancellationWindowHours: settings?.cancellationWindowHours ?? 24,
+    overbookingAllowed: settings?.overbookingAllowed ?? false,
+    overtimeAllowedMinutes: settings?.overtimeAllowedMinutes ?? 0,
+    lowStockDefaultThreshold: settings?.lowStockDefaultThreshold ?? 5,
   });
   const [pending, setPending] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -71,6 +83,10 @@ export function SettingsForm({ settings }: { settings: Settings }) {
       noShowGraceMinutes: Number(form.noShowGraceMinutes),
       depositPercent: Number(form.depositPercent),
       bookingBufferMinutes: Number(form.bookingBufferMinutes),
+      depositFlatAmount: Number(form.depositFlatAmount),
+      cancellationWindowHours: Number(form.cancellationWindowHours),
+      overtimeAllowedMinutes: Number(form.overtimeAllowedMinutes),
+      lowStockDefaultThreshold: Number(form.lowStockDefaultThreshold),
     });
     setPending(false);
     if (!result.ok) return setError(result.error);
@@ -116,13 +132,58 @@ export function SettingsForm({ settings }: { settings: Settings }) {
       <Card className="space-y-4 p-5">
         <h2 className="font-display text-lg text-ink">Policies</h2>
         <Textarea label="Cancellation policy" rows={3} value={form.cancellationPolicy} onChange={(e) => set("cancellationPolicy", e.target.value)} />
+        <Input label="Cancellation window (hours before appointment)" type="number" value={form.cancellationWindowHours} onChange={(e) => set("cancellationWindowHours", Number(e.target.value) as never)} />
         <label className="flex items-center gap-2 text-sm text-ink">
           <input type="checkbox" checked={form.depositEnabled} onChange={(e) => set("depositEnabled", e.target.checked)} />
           Require a deposit for bookings
         </label>
         {form.depositEnabled && (
-          <Input label="Deposit percentage" type="number" value={form.depositPercent} onChange={(e) => set("depositPercent", Number(e.target.value) as never)} />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-xs text-ink-soft">Deposit mode</label>
+              <select
+                value={form.depositMode}
+                onChange={(e) => set("depositMode", e.target.value as "flat" | "percent")}
+                className="w-full rounded-sm border border-line px-3 py-2 text-sm"
+              >
+                <option value="flat">Flat amount (GH₵)</option>
+                <option value="percent">Percentage of price</option>
+              </select>
+            </div>
+            {form.depositMode === "flat" ? (
+              <Input label="Flat deposit (GH₵)" type="number" value={form.depositFlatAmount} onChange={(e) => set("depositFlatAmount", Number(e.target.value) as never)} />
+            ) : (
+              <Input label="Deposit percentage" type="number" value={form.depositPercent} onChange={(e) => set("depositPercent", Number(e.target.value) as never)} />
+            )}
+          </div>
         )}
+      </Card>
+
+      <Card className="space-y-4 p-5">
+        <h2 className="font-display text-lg text-ink">Overbooking &amp; overtime</h2>
+        <label className="flex items-center gap-2 text-sm text-ink">
+          <input type="checkbox" checked={form.overbookingAllowed} onChange={(e) => set("overbookingAllowed", e.target.checked)} />
+          Allow overbooking (back-to-back slots without the buffer gap)
+        </label>
+        <Input
+          label="Overtime allowed past closing (minutes)"
+          type="number"
+          value={form.overtimeAllowedMinutes}
+          onChange={(e) => set("overtimeAllowedMinutes", Number(e.target.value) as never)}
+        />
+        <p className="text-xs text-ink-soft">
+          These directly change what slots the booking engine offers — not just a display setting.
+        </p>
+      </Card>
+
+      <Card className="space-y-4 p-5">
+        <h2 className="font-display text-lg text-ink">Inventory</h2>
+        <Input
+          label="Default low-stock threshold for new items"
+          type="number"
+          value={form.lowStockDefaultThreshold}
+          onChange={(e) => set("lowStockDefaultThreshold", Number(e.target.value) as never)}
+        />
       </Card>
 
       {error && <p className="text-sm text-rust">{error}</p>}

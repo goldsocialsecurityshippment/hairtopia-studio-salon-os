@@ -14,14 +14,29 @@ import {
 import { eq, and, avg, count } from "drizzle-orm";
 
 export async function getSettings() {
-  const [settings] = await db.select().from(salonSettings).where(eq(salonSettings.id, "main"));
+  const [settings] = await db
+    .select()
+    .from(salonSettings)
+    .where(eq(salonSettings.id, "main"));
+
   return settings;
 }
 
 export async function getCategoriesWithServices() {
-  const categories = await db.select().from(serviceCategories).orderBy(serviceCategories.sortOrder);
-  const allServices = await db.select().from(services).where(eq(services.active, true));
-  const allVariations = await db.select().from(serviceVariations).where(eq(serviceVariations.active, true));
+  const categories = await db
+    .select()
+    .from(serviceCategories)
+    .orderBy(serviceCategories.sortOrder);
+
+  const allServices = await db
+    .select()
+    .from(services)
+    .where(eq(services.active, true));
+
+  const allVariations = await db
+    .select()
+    .from(serviceVariations)
+    .where(eq(serviceVariations.active, true));
 
   return categories.map((cat) => ({
     ...cat,
@@ -51,36 +66,114 @@ export async function getActiveStylists() {
     })
     .from(reviews)
     .innerJoin(appointments, eq(reviews.appointmentId, appointments.id))
-    .where(eq(reviews.hidden, false))
+    .where(and(eq(reviews.moderated, true), eq(reviews.hidden, false)))
     .groupBy(appointments.stylistId);
 
   return stylists.map((s) => {
     const profile = profiles.find((p) => p.userId === s.id);
-    const serviceIds = links.filter((l) => l.stylistId === s.id).map((l) => l.serviceId);
+
+    const serviceIds = links
+      .filter((l) => l.stylistId === s.id)
+      .map((l) => l.serviceId);
+
     const ratingRow = ratings.find((r) => r.stylistId === s.id);
+
     return {
       ...s,
       profile,
       serviceIds,
-      avgRating: ratingRow?.avgRating ? Number(ratingRow.avgRating) : null,
+      avgRating: ratingRow?.avgRating
+        ? Number(ratingRow.avgRating)
+        : null,
       reviewCount: ratingRow?.reviewCount ?? 0,
+    };
+  });
+}
+
+export async function getPublicTeam() {
+  const stylists = await getActiveStylists();
+
+  const ratingRows = await db
+    .select({
+      stylistId: appointments.stylistId,
+      overallRating: avg(reviews.overallRating),
+      qualityRating: avg(reviews.qualityRating),
+      professionalismRating: avg(reviews.professionalismRating),
+      communicationRating: avg(reviews.communicationRating),
+      respectfulnessRating: avg(reviews.respectfulnessRating),
+      punctualityRating: avg(reviews.punctualityRating),
+    })
+    .from(reviews)
+    .innerJoin(appointments, eq(reviews.appointmentId, appointments.id))
+    .where(and(eq(reviews.moderated, true), eq(reviews.hidden, false)))
+    .groupBy(appointments.stylistId);
+
+  return stylists.map((stylist) => {
+    const ratingRow = ratingRows.find(
+      (row) => row.stylistId === stylist.id,
+    );
+
+    return {
+      ...stylist,
+      ratingBreakdown: ratingRow
+        ? {
+            overall: ratingRow.overallRating
+              ? Number(ratingRow.overallRating)
+              : null,
+
+            quality: ratingRow.qualityRating
+              ? Number(ratingRow.qualityRating)
+              : null,
+
+            professionalism: ratingRow.professionalismRating
+              ? Number(ratingRow.professionalismRating)
+              : null,
+
+            communication: ratingRow.communicationRating
+              ? Number(ratingRow.communicationRating)
+              : null,
+
+            respectfulness: ratingRow.respectfulnessRating
+              ? Number(ratingRow.respectfulnessRating)
+              : null,
+
+            punctuality: ratingRow.punctualityRating
+              ? Number(ratingRow.punctualityRating)
+              : null,
+          }
+        : null,
     };
   });
 }
 
 export async function getStylistsForService(serviceId: string) {
   const all = await getActiveStylists();
+
   return all.filter((s) => s.serviceIds.includes(serviceId));
 }
 
 export async function getServiceById(serviceId: string) {
-  const [service] = await db.select().from(services).where(eq(services.id, serviceId));
+  const [service] = await db
+    .select()
+    .from(services)
+    .where(eq(services.id, serviceId));
+
   if (!service) return null;
+
   const variations = await db
     .select()
     .from(serviceVariations)
-    .where(and(eq(serviceVariations.serviceId, serviceId), eq(serviceVariations.active, true)));
-  return { ...service, variations };
+    .where(
+      and(
+        eq(serviceVariations.serviceId, serviceId),
+        eq(serviceVariations.active, true),
+      ),
+    );
+
+  return {
+    ...service,
+    variations,
+  };
 }
 
 export async function getGalleryImages() {
@@ -89,6 +182,7 @@ export async function getGalleryImages() {
     .from(galleryImages)
     .where(eq(galleryImages.active, true))
     .orderBy(galleryImages.sortOrder);
+
   return rows;
 }
 
@@ -100,9 +194,37 @@ export async function getPublishedReviews(limit = 6) {
     })
     .from(reviews)
     .innerJoin(appointments, eq(reviews.appointmentId, appointments.id))
-    .where(eq(reviews.hidden, false));
+    .where(and(eq(reviews.moderated, true), eq(reviews.hidden, false)));
 
   return rows
-    .sort((a, b) => (b.review.createdAt > a.review.createdAt ? 1 : -1))
+    .sort((a, b) =>
+      b.review.createdAt > a.review.createdAt ? 1 : -1,
+    )
+    .slice(0, limit);
+}
+
+export async function getPublicReviewsForStylist(
+  stylistId: string,
+  limit = 3,
+) {
+  const rows = await db
+    .select({
+      review: reviews,
+      appointment: appointments,
+    })
+    .from(reviews)
+    .innerJoin(appointments, eq(reviews.appointmentId, appointments.id))
+    .where(
+      and(
+        eq(appointments.stylistId, stylistId),
+        eq(reviews.moderated, true),
+        eq(reviews.hidden, false),
+      ),
+    );
+
+  return rows
+    .sort((a, b) =>
+      b.review.createdAt > a.review.createdAt ? 1 : -1,
+    )
     .slice(0, limit);
 }

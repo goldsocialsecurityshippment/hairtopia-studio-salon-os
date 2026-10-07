@@ -1,19 +1,19 @@
-import dotenv from "dotenv";
-
-dotenv.config({ path: ".env.local" });
-
-import { neon } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-http";
+import Database from "better-sqlite3";
+import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema";
+import path from "path";
 
-const databaseUrl = process.env.DATABASE_URL;
+const DB_PATH = process.env.DATABASE_PATH || path.join(process.cwd(), "data", "hairtopia.db");
 
-if (!databaseUrl) {
-  throw new Error(
-    "DATABASE_URL is not set. Make sure .env.local exists in the project root."
-  );
+const globalForDb = globalThis as unknown as { sqlite?: Database.Database };
+
+const sqlite = globalForDb.sqlite ?? new Database(DB_PATH);
+sqlite.pragma("journal_mode = WAL");
+sqlite.pragma("foreign_keys = ON");
+
+if (process.env.NODE_ENV !== "production") {
+  globalForDb.sqlite = sqlite;
 }
 
-const sql = neon(databaseUrl);
-
-export const db = drizzle(sql, { schema });
+export const db = drizzle(sqlite, { schema });
+export { sqlite };

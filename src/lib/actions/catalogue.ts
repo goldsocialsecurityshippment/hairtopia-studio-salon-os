@@ -1,10 +1,11 @@
 "use server";
 
 import { db } from "@/db";
-import { services, serviceVariations, serviceCategories, salonSettings, staffRules, staffRuleAcknowledgements, galleryImages } from "@/db/schema";
+import { services, serviceVariations, serviceCategories, salonSettings, staffRules, staffRuleAcknowledgements, galleryImages, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { requireRole } from "@/lib/auth/session";
 import { recordAudit } from "@/lib/audit";
+import { notify } from "@/lib/notify";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
@@ -20,7 +21,7 @@ const serviceSchema = z.object({
 });
 
 export async function upsertService(input: z.infer<typeof serviceSchema>) {
-  const session = await requireRole("owner", "manager");
+  const session = await requireRole("owner", "admin", "manager");
   const parsed = serviceSchema.safeParse(input);
   if (!parsed.success) return { ok: false as const, error: parsed.error.issues[0].message };
   const data = parsed.data;
@@ -77,7 +78,7 @@ export async function upsertService(input: z.infer<typeof serviceSchema>) {
 }
 
 export async function setServiceActive(id: string, active: boolean) {
-  const session = await requireRole("owner", "manager");
+  const session = await requireRole("owner", "admin", "manager");
   await db.update(services).set({ active }).where(eq(services.id, id));
   await recordAudit({ session, action: "service_active_toggled", entityType: "service", entityId: id, after: { active } });
   revalidatePath("/admin/services");
@@ -92,7 +93,7 @@ const variationSchema = z.object({
 });
 
 export async function upsertVariation(input: z.infer<typeof variationSchema>) {
-  const session = await requireRole("owner", "manager");
+  const session = await requireRole("owner", "admin", "manager");
   const parsed = variationSchema.safeParse(input);
   if (!parsed.success) return { ok: false as const, error: parsed.error.issues[0].message };
   const data = parsed.data;
@@ -119,7 +120,7 @@ export async function upsertVariation(input: z.infer<typeof variationSchema>) {
 }
 
 export async function deleteVariation(id: string) {
-  const session = await requireRole("owner", "manager");
+  const session = await requireRole("owner", "admin", "manager");
   await db.delete(serviceVariations).where(eq(serviceVariations.id, id));
   await recordAudit({ session, action: "service_variation_deleted", entityType: "service_variation", entityId: id });
   revalidatePath("/admin/services");
@@ -127,7 +128,7 @@ export async function deleteVariation(id: string) {
 }
 
 export async function addCategory(name: string) {
-  const session = await requireRole("owner", "manager");
+  const session = await requireRole("owner", "admin", "manager");
   const [created] = await db.insert(serviceCategories).values({ name }).returning();
   await recordAudit({ session, action: "category_created", entityType: "service_category", entityId: created.id, after: { name } });
   revalidatePath("/admin/services");
@@ -154,6 +155,13 @@ const settingsSchema = z.object({
   depositEnabled: z.boolean(),
   depositPercent: z.number().min(0).max(100),
   bookingBufferMinutes: z.number().nonnegative(),
+  // --- V2 additions ---
+  depositMode: z.enum(["flat", "percent"]),
+  depositFlatAmount: z.number().nonnegative(),
+  cancellationWindowHours: z.number().nonnegative(),
+  overbookingAllowed: z.boolean(),
+  overtimeAllowedMinutes: z.number().nonnegative(),
+  lowStockDefaultThreshold: z.number().nonnegative(),
 });
 
 export async function updateSalonSettings(input: z.infer<typeof settingsSchema>) {
@@ -194,6 +202,26 @@ export async function addStaffRule(input: z.infer<typeof ruleSchema>) {
   if (!parsed.success) return { ok: false as const, error: parsed.error.issues[0].message };
   const [created] = await db.insert(staffRules).values(parsed.data).returning();
   await recordAudit({ session, action: "staff_rule_created", entityType: "staff_rule", entityId: created.id });
+
+  // Notify every active staff member once, at creation — this schema
+  // treats "created" and "published/active" as the same event (there is no
+  // separate draft state), so there is no re-publish path that could
+  // duplicate this notification for the same rule row.
+  if (created.requiresAcknowledgement) {
+    const { inArray } = await import("drizzle-orm");
+    const staff = await db.select().from(users).where(inArray(users.role, ["stylist", "manager"]));
+    await Promise.all(
+      staff.map((s) =>
+        notify({
+          userId: s.id,
+          type: "staff_rule_published",
+          title: "New staff rule requires acknowledgement",
+          body: `"${created.title}" (${created.category}) has been published — please review and acknowledge it.`,
+        })
+      )
+    );
+  }
+
   revalidatePath("/admin/rules");
   return { ok: true as const };
 }
@@ -221,7 +249,7 @@ const galleryUploadSchema = z.object({
 });
 
 export async function addGalleryImage(input: z.infer<typeof galleryUploadSchema>) {
-  const session = await requireRole("owner", "manager");
+  const session = await requireRole("owner", "admin", "manager");
   const parsed = galleryUploadSchema.safeParse(input);
   if (!parsed.success) return { ok: false as const, error: parsed.error.issues[0].message };
 
@@ -244,7 +272,7 @@ export async function addGalleryImage(input: z.infer<typeof galleryUploadSchema>
 }
 
 export async function deleteGalleryImage(id: string) {
-  const session = await requireRole("owner", "manager");
+  const session = await requireRole("owner", "admin", "manager");
   await db.delete(galleryImages).where(eq(galleryImages.id, id));
   await recordAudit({ session, action: "gallery_image_deleted", entityType: "gallery_image", entityId: id });
   revalidatePath("/admin/gallery");

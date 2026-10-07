@@ -9,7 +9,7 @@ import { notify } from "@/lib/notify";
 import { revalidatePath } from "next/cache";
 
 export async function startService(appointmentId: string) {
-  const session = await requireRole("stylist", "manager", "owner");
+  const session = await requireRole("stylist", "manager", "owner", "admin");
   const [appt] = await db.select().from(appointments).where(eq(appointments.id, appointmentId));
   if (!appt) return { ok: false as const, error: "Appointment not found." };
   if (session.role === "stylist" && appt.stylistId !== session.userId) {
@@ -49,7 +49,7 @@ function inferMediaType(url: string): "image" | "video" {
 }
 
 export async function completeService(params: { appointmentId: string; mediaUrls?: string[] }) {
-  const session = await requireRole("stylist", "manager", "owner");
+  const session = await requireRole("stylist", "manager", "owner", "admin");
   const [appt] = await db.select().from(appointments).where(eq(appointments.id, params.appointmentId));
   if (!appt) return { ok: false as const, error: "Appointment not found." };
   if (session.role === "stylist" && appt.stylistId !== session.userId) {
@@ -121,7 +121,7 @@ export async function completeService(params: { appointmentId: string; mediaUrls
 }
 
 export async function uploadCompletedWork(params: { appointmentId: string; mediaUrls: string[] }) {
-  const session = await requireRole("stylist", "manager", "owner");
+  const session = await requireRole("stylist", "manager", "owner", "admin");
   if (!params.mediaUrls.length) return { ok: false as const, error: "No files provided." };
 
   await db.insert(completedWork).values(
@@ -152,7 +152,7 @@ export async function reviewCompletedWork(params: {
   status: "approved" | "needs_review" | "issue_reported";
   note?: string;
 }) {
-  const session = await requireRole("manager", "owner");
+  const session = await requireRole("manager", "owner", "admin");
   await db
     .update(completedWork)
     .set({

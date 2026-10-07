@@ -1,7 +1,12 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 
-export type Role = "customer" | "stylist" | "manager" | "owner";
+export type Role = "customer" | "stylist" | "manager" | "owner" | "admin";
+
+/** Roles allowed full, unrestricted client-record access (CRM privacy model). */
+export const FULL_CLIENT_ACCESS_ROLES: Role[] = ["owner", "admin"];
+/** Roles allowed into any admin/back-office area at all. */
+export const BACK_OFFICE_ROLES: Role[] = ["owner", "admin", "manager"];
 
 export type SessionPayload = {
   userId: string;

@@ -1,5 +1,5 @@
 import { db } from "@/db";
-import { appointments, payments, users, reviews, attendance, services } from "@/db/schema";
+import { appointments, payments, users, reviews, attendance, services, consultations } from "@/db/schema";
 import { eq, gte, avg, count } from "drizzle-orm";
 import { Card } from "@/components/ui/Card";
 
@@ -49,6 +49,36 @@ export default async function AdminReportsPage({
   const cancelled = periodAppointments.filter((a) => a.appointment.status === "cancelled").length;
   const noShow = periodAppointments.filter((a) => a.appointment.status === "no_show").length;
   const walkins = periodAppointments.filter((a) => a.appointment.source !== "online").length;
+
+  // Unique clients vs appointments — a client booked 5 times counts once here,
+  // never as 5. New vs returning is derived from whether this is their first
+  // ever appointment (across all time, not just this period).
+  const clientIdsThisPeriod = new Set(periodAppointments.map((a) => a.appointment.clientId).filter(Boolean));
+  const allAppointmentsEver = await db.select({ clientId: appointments.clientId, scheduledDate: appointments.scheduledDate }).from(appointments);
+  const firstVisitByClient = new Map<string, string>();
+  for (const a of allAppointmentsEver) {
+    if (!a.clientId) continue;
+    const existing = firstVisitByClient.get(a.clientId);
+    if (!existing || a.scheduledDate < existing) firstVisitByClient.set(a.clientId, a.scheduledDate);
+  }
+  const newClientsThisPeriod = Array.from(clientIdsThisPeriod).filter(
+    (id) => id && firstVisitByClient.get(id) && firstVisitByClient.get(id)! >= since
+  ).length;
+  const returningClientsThisPeriod = clientIdsThisPeriod.size - newClientsThisPeriod;
+
+  const depositsCollected = periodPayments.filter((p) => p.paymentType === "deposit").reduce((s, p) => s + p.amount, 0);
+  const outstandingBalance = periodAppointments.reduce((s, a) => s + (a.appointment.balanceDue || 0), 0);
+  const paymentsByMethod = new Map<string, number>();
+  periodPayments.forEach((p) => paymentsByMethod.set(p.method, (paymentsByMethod.get(p.method) ?? 0) + p.amount));
+
+  const { inventoryItems } = await import("@/db/schema");
+  const lowStockCount = (await db.select().from(inventoryItems)).filter((i) => i.active && i.quantity <= i.minThreshold).length;
+
+  const allConsultations = await db.select().from(consultations);
+  const periodConsultations = allConsultations.filter((c) => new Date(c.createdAt) >= fromDate);
+  const consultationsCompleted = periodConsultations.filter((c) => c.status === "completed").length;
+  const consultationsDeclined = periodConsultations.filter((c) => c.status === "declined").length;
+  const consultationsConverted = periodConsultations.filter((c) => c.status === "converted").length;
 
   const serviceCounts = new Map<string, number>();
   periodAppointments.forEach((a) => {
@@ -101,6 +131,32 @@ export default async function AdminReportsPage({
         <Card className="p-5"><p className="text-xs uppercase tracking-wide2 text-ink-soft">No-shows</p><p className="mt-2 font-display text-2xl text-ink">{noShow}</p></Card>
         <Card className="p-5"><p className="text-xs uppercase tracking-wide2 text-ink-soft">Walk-ins</p><p className="mt-2 font-display text-2xl text-ink">{walkins}</p></Card>
         <Card className="p-5"><p className="text-xs uppercase tracking-wide2 text-ink-soft">Total appointments</p><p className="mt-2 font-display text-2xl text-ink">{periodAppointments.length}</p></Card>
+        <Card className="p-5"><p className="text-xs uppercase tracking-wide2 text-ink-soft">Unique clients</p><p className="mt-2 font-display text-2xl text-ink">{clientIdsThisPeriod.size}</p><p className="mt-1 text-xs text-ink-soft">{newClientsThisPeriod} new · {returningClientsThisPeriod} returning</p></Card>
+        <Card className="p-5"><p className="text-xs uppercase tracking-wide2 text-ink-soft">Deposits collected</p><p className="mt-2 font-display text-2xl text-ink">GH₵{depositsCollected.toFixed(0)}</p></Card>
+        <Card className="p-5"><p className="text-xs uppercase tracking-wide2 text-ink-soft">Outstanding balance</p><p className="mt-2 font-display text-2xl text-ink">GH₵{outstandingBalance.toFixed(0)}</p></Card>
+        <Card className="p-5"><p className="text-xs uppercase tracking-wide2 text-ink-soft">Low stock items</p><p className="mt-2 font-display text-2xl text-ink">{lowStockCount}</p></Card>
+      </div>
+
+      <div className="mt-6">
+        <h2 className="mb-3 font-display text-lg text-ink">Consultations</h2>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <Card className="p-4"><p className="text-xs text-ink-soft">Total requests</p><p className="mt-1 font-display text-lg text-ink">{periodConsultations.length}</p></Card>
+          <Card className="p-4"><p className="text-xs text-ink-soft">Completed</p><p className="mt-1 font-display text-lg text-ink">{consultationsCompleted}</p></Card>
+          <Card className="p-4"><p className="text-xs text-ink-soft">Converted to booking</p><p className="mt-1 font-display text-lg text-ink">{consultationsConverted}</p></Card>
+          <Card className="p-4"><p className="text-xs text-ink-soft">Declined</p><p className="mt-1 font-display text-lg text-ink">{consultationsDeclined}</p></Card>
+        </div>
+      </div>
+
+      <div className="mt-6">
+        <h2 className="mb-3 font-display text-lg text-ink">Payments by method</h2>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          {["cash", "mobile_money", "card", "bank_transfer"].map((m) => (
+            <Card key={m} className="p-4">
+              <p className="text-xs capitalize text-ink-soft">{m.replace("_", " ")}</p>
+              <p className="mt-1 font-display text-lg text-ink">GH₵{(paymentsByMethod.get(m) ?? 0).toFixed(0)}</p>
+            </Card>
+          ))}
+        </div>
       </div>
 
       <div className="mt-8 grid gap-6 lg:grid-cols-2">
@@ -125,6 +181,8 @@ export default async function AdminReportsPage({
               const attend = attendanceRows.filter((a) => a.staffId === s.id);
               const lateCount = attend.filter((a) => a.status === "late").length;
               const revenue = revenueByStylist.get(s.id) ?? 0;
+              const stylistAppointments = periodAppointments.filter((a) => a.appointment.stylistId === s.id);
+              const uniqueClientsServed = new Set(stylistAppointments.map((a) => a.appointment.clientId).filter(Boolean)).size;
               return (
                 <div key={s.id} className="rounded-card border border-line bg-surface px-4 py-3 text-sm">
                   <div className="flex items-center justify-between">
@@ -134,7 +192,7 @@ export default async function AdminReportsPage({
                     </span>
                   </div>
                   <p className="mt-1 text-xs text-ink-soft">
-                    GH₵{revenue.toFixed(0)} revenue · {rating?.reviewCount ?? 0} reviews · {lateCount} late
+                    GH₵{revenue.toFixed(0)} revenue · {stylistAppointments.length} appointments · {uniqueClientsServed} unique clients · {rating?.reviewCount ?? 0} reviews · {lateCount} late
                   </p>
                 </div>
               );

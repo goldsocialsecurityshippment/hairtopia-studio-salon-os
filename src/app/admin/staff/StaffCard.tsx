@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { setStaffActive } from "@/lib/actions/staff";
 import { Badge, statusTone, statusLabel } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -64,7 +65,10 @@ export function StaffCard({
       </div>
 
       {canManage && (
-        <div className="mt-4">
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Link href={`/admin/staff/${staff.id}`}>
+            <Button size="sm" variant="secondary">HR record</Button>
+          </Link>
           {!confirming ? (
             <Button size="sm" variant={staff.active ? "secondary" : "primary"} onClick={() => setConfirming(true)}>
               {staff.active ? "Deactivate" : "Reactivate"}

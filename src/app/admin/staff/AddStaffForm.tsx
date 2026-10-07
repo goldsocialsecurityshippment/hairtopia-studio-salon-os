@@ -14,6 +14,7 @@ export function AddStaffForm() {
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<"stylist" | "manager">("stylist");
+  const [category, setCategory] = useState<"hair_stylist" | "nail_technician" | "lash_technician" | "makeup_artist" | "other">("hair_stylist");
   const [specialties, setSpecialties] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +24,7 @@ export function AddStaffForm() {
     e.preventDefault();
     setPending(true);
     setError(null);
-    const result = await addStaff({ name, phone, email: email || undefined, role, specialties: specialties || undefined });
+    const result = await addStaff({ name, phone, email: email || undefined, role, category, specialties: specialties || undefined });
     setPending(false);
     if (!result.ok) return setError(result.error);
     setTempCredentials({ phone, password: result.tempPassword });
@@ -46,12 +47,21 @@ export function AddStaffForm() {
           <option value="manager">Manager</option>
         </Select>
         {role === "stylist" && (
-          <Input
-            label="Specialties (optional)"
-            value={specialties}
-            onChange={(e) => setSpecialties(e.target.value)}
-            placeholder="e.g. Braids, Retouch"
-          />
+          <>
+            <Select label="Category" value={category} onChange={(e) => setCategory(e.target.value as typeof category)}>
+              <option value="hair_stylist">Hair Stylist</option>
+              <option value="nail_technician">Nail Technician</option>
+              <option value="lash_technician">Lash Technician</option>
+              <option value="makeup_artist">Makeup Artist</option>
+              <option value="other">Other Beauty Professional</option>
+            </Select>
+            <Input
+              label="Specialties (optional)"
+              value={specialties}
+              onChange={(e) => setSpecialties(e.target.value)}
+              placeholder="e.g. Braids, Retouch"
+            />
+          </>
         )}
         {error && <p className="text-sm text-rust">{error}</p>}
         <Button type="submit" className="w-full" loading={pending}>

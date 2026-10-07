@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { upsertService, setServiceActive, upsertVariation, deleteVariation, addCategory } from "@/lib/actions/catalogue";
+import { publishServiceTerms, listServiceTermsHistory } from "@/lib/actions/service-terms";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
@@ -20,6 +21,69 @@ type ServiceItem = {
 };
 type Category = { id: string; name: string; services: ServiceItem[] };
 
+/** Reusable, versioned Terms & Conditions editor for ANY service — used for
+ * Bridal Makeup, but not hardcoded to it. Publishing a new version never
+ * edits an old one in place, so a past appointment's accepted version stays
+ * exactly what the customer agreed to. */
+function ServiceTermsEditor({ serviceId }: { serviceId: string }) {
+  const [history, setHistory] = useState<{ id: string; version: number; title: string; content: string; active: boolean }[] | null>(null);
+  const [title, setTitle] = useState("Terms & Conditions");
+  const [content, setContent] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    listServiceTermsHistory(serviceId).then((rows) => {
+      setHistory(rows);
+      const active = rows.find((r) => r.active);
+      if (active) {
+        setTitle(active.title);
+        setContent(active.content);
+      }
+    });
+  }, [serviceId]);
+
+  async function publish() {
+    setPending(true);
+    setError(null);
+    const result = await publishServiceTerms({ serviceId, title, content });
+    setPending(false);
+    if (!result.ok) return setError(result.error);
+    const rows = await listServiceTermsHistory(serviceId);
+    setHistory(rows);
+  }
+
+  if (history === null) return <p className="mt-3 text-xs text-ink-soft">Loading terms…</p>;
+
+  return (
+    <div className="mt-3 rounded-sm bg-canvas p-3">
+      {history.length > 0 && (
+        <p className="mb-2 text-xs text-ink-soft">
+          Current version: v{history.find((r) => r.active)?.version ?? "—"} · {history.length} version(s) on file
+        </p>
+      )}
+      <Input label="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
+      <label className="mt-2 block">
+        <span className="mb-1 block text-xs text-ink-soft">Content</span>
+        <textarea
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          rows={6}
+          className="w-full rounded-sm border border-line px-3 py-2 text-sm"
+        />
+      </label>
+      {error && <p className="mt-1 text-xs text-rust">{error}</p>}
+      <Button size="sm" className="mt-2" loading={pending} disabled={!content.trim()} onClick={publish}>
+        Publish new version
+      </Button>
+      <p className="mt-1 text-xs text-ink-soft">
+        Publishing creates a new version and shows it to customers going forward — past bookings keep the
+        version they originally accepted.
+      </p>
+    </div>
+  );
+}
+
 function ServiceRow({ service, categoryId }: { service: ServiceItem; categoryId: string }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
@@ -28,6 +92,7 @@ function ServiceRow({ service, categoryId }: { service: ServiceItem; categoryId:
   const [duration, setDuration] = useState(service.durationMinutes);
   const [pending, setPending] = useState(false);
   const [showVariations, setShowVariations] = useState(false);
+  const [showTerms, setShowTerms] = useState(false);
   const [newVarLabel, setNewVarLabel] = useState("");
   const [newVarPrice, setNewVarPrice] = useState<number | undefined>(undefined);
 
@@ -89,8 +154,13 @@ function ServiceRow({ service, categoryId }: { service: ServiceItem; categoryId:
           <Button size="sm" variant="ghost" onClick={() => setShowVariations((v) => !v)}>
             Variations ({service.variations.length})
           </Button>
+          <Button size="sm" variant="ghost" onClick={() => setShowTerms((t) => !t)}>
+            Terms &amp; Conditions
+          </Button>
         </div>
       </div>
+
+      {showTerms && <ServiceTermsEditor serviceId={service.id} />}
 
       {editing && (
         <div className="mt-3 flex flex-wrap items-end gap-3 rounded-sm bg-canvas p-3">

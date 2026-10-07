@@ -14,6 +14,7 @@ const addStaffSchema = z.object({
   phone: z.string().min(9),
   email: z.string().email().optional().or(z.literal("")),
   role: z.enum(["stylist", "manager"]),
+  category: z.enum(["hair_stylist", "nail_technician", "lash_technician", "makeup_artist", "other"]).default("hair_stylist"),
   bio: z.string().optional(),
   specialties: z.string().optional(),
   yearsExperience: z.coerce.number().optional(),
@@ -22,7 +23,7 @@ const addStaffSchema = z.object({
 
 /** Owner adds a stylist or manager. A temporary password is generated and returned once. */
 export async function addStaff(input: z.infer<typeof addStaffSchema>) {
-  const session = await requireRole("owner", "manager");
+  const session = await requireRole("owner", "admin", "manager");
   const parsed = addStaffSchema.safeParse(input);
   if (!parsed.success) return { ok: false as const, error: parsed.error.issues[0].message };
   const data = parsed.data;
@@ -47,6 +48,7 @@ export async function addStaff(input: z.infer<typeof addStaffSchema>) {
 
   await db.insert(staffProfiles).values({
     userId: user.id,
+    category: data.category,
     bio: data.bio || null,
     specialties: data.specialties || null,
     yearsExperience: data.yearsExperience || null,
@@ -83,7 +85,7 @@ export async function addStaff(input: z.infer<typeof addStaffSchema>) {
 }
 
 export async function setStaffActive(userId: string, active: boolean) {
-  const session = await requireRole("owner", "manager");
+  const session = await requireRole("owner", "admin", "manager");
   const [before] = await db.select().from(users).where(eq(users.id, userId));
   await db.update(users).set({ active }).where(eq(users.id, userId));
   await db.update(staffProfiles).set({ active }).where(eq(staffProfiles.userId, userId));
@@ -101,8 +103,28 @@ export async function setStaffActive(userId: string, active: boolean) {
   return { ok: true as const };
 }
 
+export async function updateStaffCategory(
+  userId: string,
+  category: "hair_stylist" | "nail_technician" | "lash_technician" | "makeup_artist" | "other"
+) {
+  const session = await requireRole("owner", "admin", "manager");
+  await db.update(staffProfiles).set({ category }).where(eq(staffProfiles.userId, userId));
+
+  await recordAudit({
+    session,
+    action: "staff_category_updated",
+    entityType: "staff_profile",
+    entityId: userId,
+    after: { category },
+  });
+
+  revalidatePath(`/admin/staff/${userId}`);
+  revalidatePath("/team");
+  return { ok: true as const };
+}
+
 export async function updateStylistServices(stylistId: string, serviceIds: string[]) {
-  const session = await requireRole("owner", "manager");
+  const session = await requireRole("owner", "admin", "manager");
   await db.delete(stylistServices).where(eq(stylistServices.stylistId, stylistId));
   if (serviceIds.length) {
     await db.insert(stylistServices).values(serviceIds.map((serviceId) => ({ stylistId, serviceId })));
@@ -127,7 +149,7 @@ export async function updateAvailability(params: {
   endTime: string;
   active: boolean;
 }) {
-  const session = await requireRole("owner", "manager");
+  const session = await requireRole("owner", "admin", "manager");
   const [existing] = await db
     .select()
     .from(availability)

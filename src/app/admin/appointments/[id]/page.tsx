@@ -17,11 +17,12 @@ import { eq, asc } from "drizzle-orm";
 import { Badge, statusTone, statusLabel } from "@/components/ui/Badge";
 import { PaymentForm } from "./PaymentForm";
 import { BeforeAfterPanel } from "./BeforeAfterPanel";
+import { FinalPriceForm } from "./FinalPriceForm";
 
 export default async function AdminAppointmentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const user = await getCurrentUser();
-  if (!user || (user.role !== "manager" && user.role !== "owner")) redirect("/login?next=/admin/appointments");
+  if (!user || (user.role !== "manager" && user.role !== "owner" && user.role !== "admin")) redirect("/login?next=/admin/appointments");
 
   const [appointment] = await db.select().from(appointments).where(eq(appointments.id, id));
   if (!appointment) notFound();
@@ -72,8 +73,26 @@ export default async function AdminAppointmentDetailPage({ params }: { params: P
         <div className="rounded-card border border-line bg-surface p-4">
           <p className="text-xs uppercase tracking-wide2 text-ink-soft">Estimated price</p>
           <p className="mt-1 text-sm text-ink">GH₵{appointment.priceEstimate}</p>
+          {service && service.priceMax != null && service.priceMax !== service.priceMin && (
+            <FinalPriceForm
+              appointmentId={appointment.id}
+              currentPrice={appointment.priceEstimate}
+              priceMin={service.priceMin}
+              priceMax={service.priceMax}
+            />
+          )}
         </div>
       </div>
+
+      {appointment.acceptedTermsId && (
+        <div className="mt-4 rounded-card border border-bronze-200 bg-bronze-50/50 p-4">
+          <p className="text-xs uppercase tracking-wide2 text-bronze-600">Terms accepted</p>
+          <p className="mt-1 text-sm text-ink">
+            Version {appointment.acceptedTermsVersion} accepted at{" "}
+            {appointment.acceptedTermsAt ? new Date(appointment.acceptedTermsAt).toLocaleString() : "—"}
+          </p>
+        </div>
+      )}
 
       {appointment.instructions && (
         <div className="mt-4 rounded-card border border-line bg-bronze-50 p-4">

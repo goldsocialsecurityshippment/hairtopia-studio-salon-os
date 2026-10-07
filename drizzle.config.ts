@@ -1,13 +1,13 @@
 import type { Config } from "drizzle-kit";
-import dotenv from "dotenv";
 
-dotenv.config({ path: ".env.local" });
-
+// Respects DATABASE_PATH so `drizzle-kit push` can target a different file
+// (used by the test suite's global setup to push the schema into a
+// dedicated data/test.db without touching the real dev database).
 export default {
   schema: "./src/db/schema.ts",
   out: "./drizzle",
-  dialect: "postgresql",
+  dialect: "sqlite",
   dbCredentials: {
-    url: process.env.DATABASE_URL!,
+    url: process.env.DATABASE_PATH || "./data/hairtopia.db",
   },
 } satisfies Config;

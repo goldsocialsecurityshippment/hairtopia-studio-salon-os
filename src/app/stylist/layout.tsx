@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import { getCurrentUser, logout } from "@/lib/actions/auth";
 import { StylistNav } from "@/components/stylist/StylistNav";
 import { Button } from "@/components/ui/Button";
+import { PushToggle } from "@/components/PushToggle";
+import { NotificationPreferences } from "@/components/NotificationPreferences";
 
 export default async function StylistLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser();
@@ -30,6 +32,13 @@ export default async function StylistLayout({ children }: { children: React.Reac
           <Link href="/stylist/ratings" className="text-ink-soft hover:text-ink">Ratings</Link>
           <Link href="/stylist/rules" className="text-ink-soft hover:text-ink">Rules</Link>
         </nav>
+        <div className="border-t border-line px-4 py-2 md:hidden">
+          <PushToggle />
+          <NotificationPreferences
+            userId={user.id}
+            relevantKeys={["bookingEvents", "cancellationEvents", "consultationEvents", "queueEvents", "staffEvents"]}
+          />
+        </div>
       </header>
       <main className="px-4 py-5">{children}</main>
       <StylistNav />

@@ -18,6 +18,7 @@ import { SiteFooter } from "@/components/SiteFooter";
 import { Badge, statusTone, statusLabel } from "@/components/ui/Badge";
 import { ArriveButton } from "./ArriveButton";
 import { CancelDialog } from "./CancelDialog";
+import { RescheduleDialog } from "./RescheduleDialog";
 import { ReviewForm } from "./ReviewForm";
 import { ReviewDisplay } from "./ReviewDisplay";
 
@@ -122,6 +123,9 @@ export default async function AppointmentDetailPage({ params }: { params: Promis
 
         <div className="mt-6 flex flex-wrap gap-3">
           {canArrive && <ArriveButton appointmentId={appointment.id} />}
+          {canCancel && appointment.stylistId && (
+            <RescheduleDialog appointmentId={appointment.id} stylistId={appointment.stylistId} serviceId={appointment.serviceId} />
+          )}
           {canCancel && <CancelDialog appointmentId={appointment.id} />}
         </div>
 

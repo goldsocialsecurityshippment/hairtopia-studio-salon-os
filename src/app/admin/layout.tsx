@@ -2,23 +2,31 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentUser, logout } from "@/lib/actions/auth";
 import { Button } from "@/components/ui/Button";
+import { PushToggle } from "@/components/PushToggle";
+import { NotificationPreferences } from "@/components/NotificationPreferences";
 
 const NAV = [
-  { href: "/admin", label: "Overview", roles: ["manager", "owner"] },
-  { href: "/admin/queue", label: "Queue", roles: ["manager", "owner"] },
-  { href: "/admin/appointments", label: "Appointments", roles: ["manager", "owner"] },
-  { href: "/admin/staff", label: "Staff", roles: ["manager", "owner"] },
-  { href: "/admin/services", label: "Services & pricing", roles: ["owner"] },
-  { href: "/admin/gallery", label: "Gallery", roles: ["manager", "owner"] },
-  { href: "/admin/reports", label: "Reports", roles: ["manager", "owner"] },
-  { href: "/admin/rules", label: "Staff rules", roles: ["owner"] },
+  { href: "/admin", label: "Overview", roles: ["manager", "owner", "admin"] },
+  { href: "/admin/queue", label: "Queue", roles: ["manager", "owner", "admin"] },
+  { href: "/admin/appointments", label: "Appointments", roles: ["manager", "owner", "admin"] },
+  { href: "/admin/requests", label: "Pending requests", roles: ["manager", "owner", "admin"] },
+  { href: "/admin/clients", label: "Clients", roles: ["manager", "owner", "admin"] },
+  { href: "/admin/consultations", label: "Consultations", roles: ["manager", "owner", "admin"] },
+  { href: "/admin/staff", label: "Staff", roles: ["manager", "owner", "admin"] },
+  { href: "/admin/inventory", label: "Inventory", roles: ["manager", "owner", "admin"] },
+  { href: "/admin/services", label: "Services & pricing", roles: ["owner", "admin"] },
+  { href: "/admin/gallery", label: "Gallery", roles: ["manager", "owner", "admin"] },
+  { href: "/admin/reports", label: "Reports", roles: ["manager", "owner", "admin"] },
+  { href: "/admin/rules", label: "Staff rules", roles: ["owner", "admin"] },
   { href: "/admin/settings", label: "Settings", roles: ["owner"] },
-  { href: "/admin/audit-log", label: "Audit log", roles: ["owner"] },
+  { href: "/admin/audit-log", label: "Audit log", roles: ["owner", "admin"] },
 ];
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser();
-  if (!user || (user.role !== "manager" && user.role !== "owner")) redirect("/login?next=/admin");
+  if (!user || (user.role !== "manager" && user.role !== "owner" && user.role !== "admin")) {
+    redirect("/login?next=/admin");
+  }
 
   const visibleNav = NAV.filter((n) => n.roles.includes(user.role));
 
@@ -30,7 +38,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             Hairtopia
           </Link>
           <span className="rounded-full bg-bronze-100 px-2 py-0.5 text-xs font-medium text-bronze-600 md:hidden">
-            {user.role === "owner" ? "Owner" : "Manager"}
+            {user.role === "owner" ? "Owner" : user.role === "admin" ? "Admin" : "Manager"}
           </span>
         </div>
         <nav className="flex gap-1 overflow-x-auto px-3 pb-3 md:flex-col md:overflow-visible md:px-3 md:pb-6">
@@ -47,6 +55,13 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         <div className="hidden px-5 pb-6 md:block">
           <p className="text-xs text-ink-soft">{user.name}</p>
           <p className="text-xs uppercase tracking-wide2 text-bronze-500">{user.role}</p>
+          <div className="mt-3">
+            <PushToggle />
+            <NotificationPreferences
+              userId={user.id}
+              relevantKeys={["bookingEvents", "paymentEvents", "consultationEvents", "staffEvents", "systemEvents"]}
+            />
+          </div>
           <form action={logout} className="mt-3">
             <Button type="submit" variant="ghost" size="sm">
               Sign out

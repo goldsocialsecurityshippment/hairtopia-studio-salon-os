@@ -38,7 +38,7 @@ export function StylistPaymentConfirm({
   async function handleConfirm() {
     setPending(true);
     setError(null);
-    const result = await recordPayment({ appointmentId, amount, method, status: "paid" });
+    const result = await recordPayment({ appointmentId, amount, method, paymentType: "full" });
     setPending(false);
     if (!result.ok) return setError(result.error);
     setOpen(false);

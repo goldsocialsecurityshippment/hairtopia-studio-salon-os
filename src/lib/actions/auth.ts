@@ -70,6 +70,14 @@ const loginSchema = z.object({
 });
 
 export async function login(formData: FormData): Promise<ActionResult> {
+  const { headers } = await import("next/headers");
+  const { checkRateLimit, clientKeyFromHeaders } = await import("@/lib/rate-limit");
+  const key = clientKeyFromHeaders(await headers(), "login");
+  const limit = checkRateLimit(key, 10, 5 * 60 * 1000); // 10 attempts per 5 minutes per IP
+  if (!limit.allowed) {
+    return { ok: false, error: "Too many login attempts. Please wait a few minutes and try again." };
+  }
+
   const parsed = loginSchema.safeParse({
     identifier: formData.get("identifier"),
     password: formData.get("password"),

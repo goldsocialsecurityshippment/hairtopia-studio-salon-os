@@ -20,6 +20,11 @@ const reviewSchema = z.object({
 });
 
 export async function submitReview(input: z.infer<typeof reviewSchema>) {
+  const { headers } = await import("next/headers");
+  const { checkRateLimit, clientKeyFromHeaders } = await import("@/lib/rate-limit");
+  const rl = checkRateLimit(clientKeyFromHeaders(await headers(), "review"), 10, 15 * 60 * 1000);
+  if (!rl.allowed) return { ok: false as const, error: "Too many review submissions from this connection. Please wait a few minutes." };
+
   const parsed = reviewSchema.safeParse(input);
   if (!parsed.success) return { ok: false as const, error: "Please provide a valid rating." };
   const data = parsed.data;
@@ -112,7 +117,7 @@ export async function updateReview(input: z.infer<typeof updateReviewSchema>) {
 }
 
 export async function moderateReview(params: { reviewId: string; hidden: boolean }) {
-  const session = await requireRole("manager", "owner");
+  const session = await requireRole("manager", "owner", "admin");
   await db
     .update(reviews)
     .set({ hidden: params.hidden, moderated: true })

@@ -3,8 +3,9 @@ import Image from "next/image";
 import { getCurrentUser } from "@/lib/actions/auth";
 
 const navLinks = [
+  { href: "/team", label: "Our Team" },
   { href: "/#services", label: "Services" },
-  { href: "/#stylists", label: "Stylists" },
+  { href: "/consult", label: "Consultation" },
   { href: "/#gallery", label: "Gallery" },
   { href: "/#contact", label: "Contact" },
 ];
