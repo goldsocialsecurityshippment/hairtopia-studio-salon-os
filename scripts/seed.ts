@@ -1,4 +1,4 @@
-import { db, sqlite } from "../src/db";
+import { db } from "../src/db";
 import {
   serviceCategories,
   services,
@@ -355,11 +355,10 @@ async function main() {
 
 main()
   .then(() => {
-    sqlite.close();
     process.exit(0);
   })
   .catch((err) => {
     console.error(err);
-    sqlite.close();
     process.exit(1);
   });
+

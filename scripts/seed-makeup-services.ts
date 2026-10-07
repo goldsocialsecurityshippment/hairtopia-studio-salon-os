@@ -118,14 +118,12 @@ export async function seedMakeupServices(db: typeof defaultDb = defaultDb) {
 const isMain = process.argv[1]?.endsWith("seed-makeup-services.ts");
 if (isMain) {
   (async () => {
-    const { sqlite } = await import("../src/db");
     try {
       await seedMakeupServices();
     } catch (err) {
       console.error(err);
-      sqlite.close();
       process.exit(1);
     }
-    sqlite.close();
   })();
 }
+

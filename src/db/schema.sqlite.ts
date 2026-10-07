@@ -1,27 +1,27 @@
-import { pgTable, text, integer, real, boolean } from "drizzle-orm/pg-core";
+import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 const id = () => text("id").primaryKey().$defaultFn(() => crypto.randomUUID());
-const createdAt = () => text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`);
+const createdAt = () => text("created_at").notNull().default(sql`(current_timestamp)`);
 
 /** ---------- USERS & ROLES ----------
  * V2 adds "admin" (Trusted Admin — full client access like owner, but not
  * necessarily full financial/settings control). Existing rows are unaffected;
  * this is an additive enum change only. */
-export const users = pgTable("users", {
+export const users = sqliteTable("users", {
   id: id(),
   role: text("role", { enum: ["customer", "stylist", "manager", "owner", "admin"] }).notNull(),
   name: text("name").notNull(),
   email: text("email").unique(),
   phone: text("phone").unique(),
   passwordHash: text("password_hash").notNull(),
-  active: boolean("active").notNull().default(true),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
   createdAt: createdAt(),
   // --- V2: push notification preference (global on/off; not per-event) ---
-  pushEnabled: boolean("push_enabled").notNull().default(true),
+  pushEnabled: integer("push_enabled", { mode: "boolean" }).notNull().default(true),
 });
 
-export const staffProfiles = pgTable("staff_profiles", {
+export const staffProfiles = sqliteTable("staff_profiles", {
   id: id(),
   userId: text("user_id").notNull().references(() => users.id),
   bio: text("bio"),
@@ -30,18 +30,18 @@ export const staffProfiles = pgTable("staff_profiles", {
   yearsExperience: integer("years_experience"),
   hireDate: text("hire_date"),
   scheduledStart: text("scheduled_start").default("08:30"), // default shift start HH:mm
-  active: boolean("active").notNull().default(true),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
   // --- V2: public team showcase ---
   category: text("category", {
     enum: ["hair_stylist", "nail_technician", "lash_technician", "makeup_artist", "other"],
   })
     .notNull()
     .default("hair_stylist"),
-  publiclyVisible: boolean("publicly_visible").notNull().default(true),
+  publiclyVisible: integer("publicly_visible", { mode: "boolean" }).notNull().default(true),
   displayOrder: integer("display_order").notNull().default(0),
 });
 
-export const customerProfiles = pgTable("customer_profiles", {
+export const customerProfiles = sqliteTable("customer_profiles", {
   id: id(),
   userId: text("user_id").notNull().references(() => users.id),
   preferredStylistId: text("preferred_stylist_id"),
@@ -49,13 +49,13 @@ export const customerProfiles = pgTable("customer_profiles", {
 });
 
 /** ---------- SERVICE CATALOGUE ---------- */
-export const serviceCategories = pgTable("service_categories", {
+export const serviceCategories = sqliteTable("service_categories", {
   id: id(),
   name: text("name").notNull(),
   sortOrder: integer("sort_order").notNull().default(0),
 });
 
-export const services = pgTable("services", {
+export const services = sqliteTable("services", {
   id: id(),
   categoryId: text("category_id").notNull().references(() => serviceCategories.id),
   name: text("name").notNull(),
@@ -65,40 +65,40 @@ export const services = pgTable("services", {
   durationMinutes: integer("duration_minutes").notNull().default(60),
   bufferMinutes: integer("buffer_minutes").notNull().default(15),
   imageUrl: text("image_url"),
-  active: boolean("active").notNull().default(true),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
   sortOrder: integer("sort_order").notNull().default(0),
 });
 
 // A purchasable variation of a service (e.g. "Medium / 6 rows / Bottom Layer") with its own price.
 // This is how size/rows/length combinations from the price list are represented without
 // hard-coding pricing logic in application code — admins can add/edit/remove these freely.
-export const serviceVariations = pgTable("service_variations", {
+export const serviceVariations = sqliteTable("service_variations", {
   id: id(),
   serviceId: text("service_id").notNull().references(() => services.id),
   label: text("label").notNull(), // e.g. "Medium / 6 rows / BL"
   price: real("price").notNull(),
-  isDefault: boolean("is_default").notNull().default(false),
-  active: boolean("active").notNull().default(true),
+  isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
 });
 
-export const stylistServices = pgTable("stylist_services", {
+export const stylistServices = sqliteTable("stylist_services", {
   id: id(),
   stylistId: text("stylist_id").notNull().references(() => users.id),
   serviceId: text("service_id").notNull().references(() => services.id),
 });
 
 // Weekly recurring working hours per stylist
-export const availability = pgTable("availability", {
+export const availability = sqliteTable("availability", {
   id: id(),
   stylistId: text("stylist_id").notNull().references(() => users.id),
   dayOfWeek: integer("day_of_week").notNull(), // 0=Sun..6=Sat
   startTime: text("start_time").notNull(), // HH:mm
   endTime: text("end_time").notNull(),
-  active: boolean("active").notNull().default(true),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
 });
 
 /** ---------- APPOINTMENTS ---------- */
-export const appointments = pgTable("appointments", {
+export const appointments = sqliteTable("appointments", {
   id: id(),
   customerId: text("customer_id").references(() => users.id), // null for guest walk-in
   customerName: text("customer_name").notNull(),
@@ -119,7 +119,7 @@ export const appointments = pgTable("appointments", {
     ],
   }).notNull().default("pending"),
   customerArrivedAt: text("customer_arrived_at"),
-  arrivalLocationVerified: boolean("arrival_location_verified"),
+  arrivalLocationVerified: integer("arrival_location_verified", { mode: "boolean" }),
   serviceStartedAt: text("service_started_at"),
   serviceCompletedAt: text("service_completed_at"),
   paymentStatus: text("payment_status", {
@@ -142,7 +142,7 @@ export const appointments = pgTable("appointments", {
   acceptedTermsAt: text("accepted_terms_at"),
 });
 
-export const appointmentStatusHistory = pgTable("appointment_status_history", {
+export const appointmentStatusHistory = sqliteTable("appointment_status_history", {
   id: id(),
   appointmentId: text("appointment_id").notNull().references(() => appointments.id),
   status: text("status").notNull(),
@@ -152,7 +152,7 @@ export const appointmentStatusHistory = pgTable("appointment_status_history", {
   timestamp: createdAt(),
 });
 
-export const customerReferences = pgTable("customer_references", {
+export const customerReferences = sqliteTable("customer_references", {
   id: id(),
   appointmentId: text("appointment_id").notNull().references(() => appointments.id),
   url: text("url").notNull(),
@@ -160,7 +160,7 @@ export const customerReferences = pgTable("customer_references", {
   uploadedAt: createdAt(),
 });
 
-export const completedWork = pgTable("completed_work", {
+export const completedWork = sqliteTable("completed_work", {
   id: id(),
   appointmentId: text("appointment_id").notNull().references(() => appointments.id),
   photoUrl: text("photo_url").notNull(),
@@ -175,7 +175,7 @@ export const completedWork = pgTable("completed_work", {
   reviewedAt: text("reviewed_at"),
 });
 
-export const cancellations = pgTable("cancellations", {
+export const cancellations = sqliteTable("cancellations", {
   id: id(),
   appointmentId: text("appointment_id").notNull().references(() => appointments.id),
   cancelledByUserId: text("cancelled_by_user_id"),
@@ -186,7 +186,7 @@ export const cancellations = pgTable("cancellations", {
 });
 
 /** ---------- QUEUE (walk-ins) ---------- */
-export const queueEntries = pgTable("queue_entries", {
+export const queueEntries = sqliteTable("queue_entries", {
   id: id(),
   appointmentId: text("appointment_id").notNull().references(() => appointments.id),
   joinedAt: createdAt(),
@@ -197,22 +197,22 @@ export const queueEntries = pgTable("queue_entries", {
 });
 
 /** ---------- ATTENDANCE ---------- */
-export const attendance = pgTable("attendance", {
+export const attendance = sqliteTable("attendance", {
   id: id(),
   staffId: text("staff_id").notNull().references(() => users.id),
   date: text("date").notNull(), // YYYY-MM-DD
   scheduledStart: text("scheduled_start"),
   loginAt: text("login_at"),
   checkInAt: text("check_in_at"),
-  checkInVerified: boolean("check_in_verified"),
+  checkInVerified: integer("check_in_verified", { mode: "boolean" }),
   checkOutAt: text("check_out_at"),
-  checkOutVerified: boolean("check_out_verified"),
+  checkOutVerified: integer("check_out_verified", { mode: "boolean" }),
   status: text("status", {
     enum: ["on_time", "late", "absent", "not_checked_in", "checked_out"],
   }).notNull().default("not_checked_in"),
 });
 
-export const attendanceEvents = pgTable("attendance_events", {
+export const attendanceEvents = sqliteTable("attendance_events", {
   id: id(),
   attendanceId: text("attendance_id").notNull().references(() => attendance.id),
   type: text("type", {
@@ -221,7 +221,7 @@ export const attendanceEvents = pgTable("attendance_events", {
   timestamp: createdAt(),
   locationLat: real("location_lat"),
   locationLng: real("location_lng"),
-  verified: boolean("verified"),
+  verified: integer("verified", { mode: "boolean" }),
   correctedByUserId: text("corrected_by_user_id"),
   originalValue: text("original_value"),
   newValue: text("new_value"),
@@ -229,7 +229,7 @@ export const attendanceEvents = pgTable("attendance_events", {
 });
 
 /** ---------- PAYMENTS ---------- */
-export const payments = pgTable("payments", {
+export const payments = sqliteTable("payments", {
   id: id(),
   appointmentId: text("appointment_id").notNull().references(() => appointments.id),
   amount: real("amount").notNull(),
@@ -266,7 +266,7 @@ export const payments = pgTable("payments", {
 });
 
 /** ---------- REVIEWS ---------- */
-export const reviews = pgTable("reviews", {
+export const reviews = sqliteTable("reviews", {
   id: id(),
   appointmentId: text("appointment_id").notNull().references(() => appointments.id),
   customerId: text("customer_id").references(() => users.id),
@@ -277,36 +277,36 @@ export const reviews = pgTable("reviews", {
   respectfulnessRating: integer("respectfulness_rating"),
   punctualityRating: integer("punctuality_rating"),
   comment: text("comment"),
-  moderated: boolean("moderated").notNull().default(false),
-  hidden: boolean("hidden").notNull().default(false),
+  moderated: integer("moderated", { mode: "boolean" }).notNull().default(false),
+  hidden: integer("hidden", { mode: "boolean" }).notNull().default(false),
   createdAt: createdAt(),
 });
 
 /** ---------- NOTIFICATIONS ---------- */
-export const notifications = pgTable("notifications", {
+export const notifications = sqliteTable("notifications", {
   id: id(),
   userId: text("user_id").notNull().references(() => users.id),
   type: text("type").notNull(),
   title: text("title").notNull(),
   body: text("body").notNull(),
-  read: boolean("read").notNull().default(false),
+  read: integer("read", { mode: "boolean" }).notNull().default(false),
   relatedAppointmentId: text("related_appointment_id"),
   createdAt: createdAt(),
 });
 
 /** ---------- STAFF RULES ---------- */
-export const staffRules = pgTable("staff_rules", {
+export const staffRules = sqliteTable("staff_rules", {
   id: id(),
   category: text("category").notNull(),
   title: text("title").notNull(),
   body: text("body").notNull(),
   version: integer("version").notNull().default(1),
-  requiresAcknowledgement: boolean("requires_acknowledgement").notNull().default(true),
-  active: boolean("active").notNull().default(true),
+  requiresAcknowledgement: integer("requires_acknowledgement", { mode: "boolean" }).notNull().default(true),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
   createdAt: createdAt(),
 });
 
-export const staffRuleAcknowledgements = pgTable("staff_rule_acknowledgements", {
+export const staffRuleAcknowledgements = sqliteTable("staff_rule_acknowledgements", {
   id: id(),
   ruleId: text("rule_id").notNull().references(() => staffRules.id),
   ruleVersion: integer("rule_version").notNull(),
@@ -315,7 +315,7 @@ export const staffRuleAcknowledgements = pgTable("staff_rule_acknowledgements", 
 });
 
 /** ---------- AUDIT LOG ---------- */
-export const auditLogs = pgTable("audit_logs", {
+export const auditLogs = sqliteTable("audit_logs", {
   id: id(),
   userId: text("user_id"),
   userRole: text("user_role"),
@@ -328,20 +328,20 @@ export const auditLogs = pgTable("audit_logs", {
 });
 
 /** ---------- GALLERY ---------- */
-export const galleryImages = pgTable("gallery_images", {
+export const galleryImages = sqliteTable("gallery_images", {
   id: id(),
   category: text("category").notNull(), // e.g. "Braids", "Nails", "Lashes", "Styling"
   mediaUrl: text("media_url").notNull(),
   mediaType: text("media_type", { enum: ["image", "video"] }).notNull().default("image"),
   caption: text("caption"),
   sortOrder: integer("sort_order").notNull().default(0),
-  active: boolean("active").notNull().default(true),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
   uploadedByUserId: text("uploaded_by_user_id"),
   createdAt: createdAt(),
 });
 
 /** ---------- SALON SETTINGS (single row) ---------- */
-export const salonSettings = pgTable("salon_settings", {
+export const salonSettings = sqliteTable("salon_settings", {
   id: text("id").primaryKey().default("main"),
   name: text("name").notNull().default("Hairtopia Studio"),
   logoUrl: text("logo_url"),
@@ -361,13 +361,13 @@ export const salonSettings = pgTable("salon_settings", {
     "Please cancel at least 2 hours before your appointment where possible."
   ),
   noShowGraceMinutes: integer("no_show_grace_minutes").notNull().default(20),
-  depositEnabled: boolean("deposit_enabled").notNull().default(true),
+  depositEnabled: integer("deposit_enabled", { mode: "boolean" }).notNull().default(true),
   depositPercent: integer("deposit_percent").notNull().default(20),
   depositFlatAmount: real("deposit_flat_amount").notNull().default(100), // GH₵100 flat per spec
   depositMode: text("deposit_mode", { enum: ["flat", "percent"] }).notNull().default("flat"),
   bookingBufferMinutes: integer("booking_buffer_minutes").notNull().default(15),
   cancellationWindowHours: integer("cancellation_window_hours").notNull().default(24),
-  overbookingAllowed: boolean("overbooking_allowed").notNull().default(false),
+  overbookingAllowed: integer("overbooking_allowed", { mode: "boolean" }).notNull().default(false),
   overtimeAllowedMinutes: integer("overtime_allowed_minutes").notNull().default(0),
   lowStockDefaultThreshold: integer("low_stock_default_threshold").notNull().default(5),
 });
@@ -382,13 +382,13 @@ export const salonSettings = pgTable("salon_settings", {
  * (e.g. Bridal Makeup). Not hardcoded into the frontend — editable by
  * Owner/Admin, and the exact version a customer accepted is preserved on
  * the appointment itself. */
-export const serviceTerms = pgTable("service_terms", {
+export const serviceTerms = sqliteTable("service_terms", {
   id: id(),
   serviceId: text("service_id").notNull().references(() => services.id),
   version: integer("version").notNull().default(1),
   title: text("title").notNull().default("Terms & Conditions"),
   content: text("content").notNull(),
-  active: boolean("active").notNull().default(true),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
   createdByUserId: text("created_by_user_id"),
   createdAt: createdAt(),
 });
@@ -396,14 +396,14 @@ export const serviceTerms = pgTable("service_terms", {
 /** Web Push subscriptions (PWA lock-screen/background notifications) — NOT
  * SMS/WhatsApp. One row per browser/device per user; endpoint is unique so
  * the same device re-subscribing updates rather than duplicates. */
-export const pushSubscriptions = pgTable("push_subscriptions", {
+export const pushSubscriptions = sqliteTable("push_subscriptions", {
   id: id(),
   userId: text("user_id").notNull().references(() => users.id),
   endpoint: text("endpoint").notNull().unique(),
   p256dh: text("p256dh").notNull(),
   auth: text("auth").notNull(),
   userAgent: text("user_agent"),
-  active: boolean("active").notNull().default(true),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
   createdAt: createdAt(),
   lastActiveAt: text("last_active_at"),
 });
@@ -411,7 +411,7 @@ export const pushSubscriptions = pgTable("push_subscriptions", {
 /** Reschedule requests preserve full history — every request a customer
  * makes (approved, declined, or superseded) stays in this table, separate
  * from the appointment's current live schedule. */
-export const rescheduleRequests = pgTable("reschedule_requests", {
+export const rescheduleRequests = sqliteTable("reschedule_requests", {
   id: id(),
   appointmentId: text("appointment_id").notNull().references(() => appointments.id),
   requestedDate: text("requested_date").notNull(),
@@ -437,16 +437,16 @@ export const rescheduleRequests = pgTable("reschedule_requests", {
  * category defaults to enabled. `pushEnabled` on `users` remains the
  * master switch — if it's off, nothing here matters, no push is sent
  * regardless of these categories. */
-export const notificationPreferences = pgTable("notification_preferences", {
+export const notificationPreferences = sqliteTable("notification_preferences", {
   userId: text("user_id").primaryKey().references(() => users.id),
-  bookingEvents: boolean("booking_events").notNull().default(true),
-  reminderEvents: boolean("reminder_events").notNull().default(true),
-  paymentEvents: boolean("payment_events").notNull().default(true),
-  consultationEvents: boolean("consultation_events").notNull().default(true),
-  cancellationEvents: boolean("cancellation_events").notNull().default(true),
-  staffEvents: boolean("staff_events").notNull().default(true), // rules, no-shows, HR
-  queueEvents: boolean("queue_events").notNull().default(true), // arrivals, queue status
-  systemEvents: boolean("system_events").notNull().default(true), // inventory, admin ops alerts
+  bookingEvents: integer("booking_events", { mode: "boolean" }).notNull().default(true),
+  reminderEvents: integer("reminder_events", { mode: "boolean" }).notNull().default(true),
+  paymentEvents: integer("payment_events", { mode: "boolean" }).notNull().default(true),
+  consultationEvents: integer("consultation_events", { mode: "boolean" }).notNull().default(true),
+  cancellationEvents: integer("cancellation_events", { mode: "boolean" }).notNull().default(true),
+  staffEvents: integer("staff_events", { mode: "boolean" }).notNull().default(true), // rules, no-shows, HR
+  queueEvents: integer("queue_events", { mode: "boolean" }).notNull().default(true), // arrivals, queue status
+  systemEvents: integer("system_events", { mode: "boolean" }).notNull().default(true), // inventory, admin ops alerts
 });
 
 /** ---------- CLIENT CRM ----------
@@ -455,7 +455,7 @@ export const notificationPreferences = pgTable("notification_preferences", {
  * created at the front desk as a walk-in (linkedUserId null). Online
  * bookings and walk-ins are matched to the SAME client row by normalized
  * phone number so "unique clients" is never inflated by repeat visits. */
-export const clients = pgTable("clients", {
+export const clients = sqliteTable("clients", {
   id: id(),
   linkedUserId: text("linked_user_id").references(() => users.id), // set once they have an account
   fullName: text("full_name").notNull(),
@@ -496,7 +496,7 @@ export const clients = pgTable("clients", {
 /** A single visit's clinical/service record, separate from the appointment's
  * operational status — this is what stylists actually read/write about a
  * client's hair on the day. */
-export const clientVisits = pgTable("client_visits", {
+export const clientVisits = sqliteTable("client_visits", {
   id: id(),
   clientId: text("client_id").notNull().references(() => clients.id),
   appointmentId: text("appointment_id").references(() => appointments.id),
@@ -513,7 +513,7 @@ export const clientVisits = pgTable("client_visits", {
 
 /** Client photos: before/after/inspiration/service. Visibility is enforced
  * server-side, not just hidden in the UI. */
-export const clientPhotos = pgTable("client_photos", {
+export const clientPhotos = sqliteTable("client_photos", {
   id: id(),
   clientId: text("client_id").notNull().references(() => clients.id),
   appointmentId: text("appointment_id").references(() => appointments.id),
@@ -527,13 +527,13 @@ export const clientPhotos = pgTable("client_photos", {
   })
     .notNull()
     .default("private_staff"),
-  publicApproved: boolean("public_approved").notNull().default(false),
+  publicApproved: integer("public_approved", { mode: "boolean" }).notNull().default(false),
   uploadedByUserId: text("uploaded_by_user_id"),
   createdAt: createdAt(),
 });
 
 /** ---------- DISCOVERY CONSULTATIONS ---------- */
-export const consultations = pgTable("consultations", {
+export const consultations = sqliteTable("consultations", {
   id: id(),
   clientId: text("client_id").references(() => clients.id),
   customerName: text("customer_name").notNull(),
@@ -561,7 +561,7 @@ export const consultations = pgTable("consultations", {
   updatedAt: text("updated_at"),
 });
 
-export const consultationPhotos = pgTable("consultation_photos", {
+export const consultationPhotos = sqliteTable("consultation_photos", {
   id: id(),
   consultationId: text("consultation_id").notNull().references(() => consultations.id),
   url: text("url").notNull(),
@@ -570,7 +570,7 @@ export const consultationPhotos = pgTable("consultation_photos", {
 });
 
 /** ---------- STAFF HR ---------- */
-export const staffContracts = pgTable("staff_contracts", {
+export const staffContracts = sqliteTable("staff_contracts", {
   id: id(),
   staffId: text("staff_id").notNull().references(() => users.id),
   title: text("title").notNull(),
@@ -586,7 +586,7 @@ export const staffContracts = pgTable("staff_contracts", {
   createdAt: createdAt(),
 });
 
-export const staffWarnings = pgTable("staff_warnings", {
+export const staffWarnings = sqliteTable("staff_warnings", {
   id: id(),
   staffId: text("staff_id").notNull().references(() => users.id),
   level: text("level", {
@@ -600,7 +600,7 @@ export const staffWarnings = pgTable("staff_warnings", {
   evidenceUrl: text("evidence_url"),
 });
 
-export const staffNoShows = pgTable("staff_no_shows", {
+export const staffNoShows = sqliteTable("staff_no_shows", {
   id: id(),
   staffId: text("staff_id").notNull().references(() => users.id),
   scheduledDate: text("scheduled_date").notNull(),
@@ -614,7 +614,7 @@ export const staffNoShows = pgTable("staff_no_shows", {
   createdAt: createdAt(),
 });
 
-export const staffAdvances = pgTable("staff_advances", {
+export const staffAdvances = sqliteTable("staff_advances", {
   id: id(),
   staffId: text("staff_id").notNull().references(() => users.id),
   entryType: text("entry_type", {
@@ -627,7 +627,7 @@ export const staffAdvances = pgTable("staff_advances", {
   createdAt: createdAt(),
 });
 
-export const uniformIssues = pgTable("uniform_issues", {
+export const uniformIssues = sqliteTable("uniform_issues", {
   id: id(),
   staffId: text("staff_id").notNull().references(() => users.id),
   item: text("item").notNull(),
@@ -645,7 +645,7 @@ export const uniformIssues = pgTable("uniform_issues", {
 });
 
 /** ---------- INVENTORY ---------- */
-export const inventoryItems = pgTable("inventory_items", {
+export const inventoryItems = sqliteTable("inventory_items", {
   id: id(),
   name: text("name").notNull(),
   category: text("category"),
@@ -659,11 +659,11 @@ export const inventoryItems = pgTable("inventory_items", {
   minThreshold: integer("min_threshold").notNull().default(5),
   unit: text("unit").notNull().default("unit"),
   location: text("location"),
-  active: boolean("active").notNull().default(true),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
   createdAt: createdAt(),
 });
 
-export const inventoryMovements = pgTable("inventory_movements", {
+export const inventoryMovements = sqliteTable("inventory_movements", {
   id: id(),
   itemId: text("item_id").notNull().references(() => inventoryItems.id),
   movementType: text("movement_type", {
@@ -676,4 +676,3 @@ export const inventoryMovements = pgTable("inventory_movements", {
   recordedByUserId: text("recorded_by_user_id").notNull(),
   createdAt: createdAt(),
 });
-

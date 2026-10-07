@@ -26,8 +26,15 @@ const itemSchema = z.object({
 
 export async function createInventoryItem(input: z.infer<typeof itemSchema>) {
   const session = await requireRole(...INV_ROLES);
+
   const parsed = itemSchema.safeParse(input);
-  if (!parsed.success) return { ok: false as const, error: parsed.error.issues[0].message };
+
+  if (!parsed.success) {
+    return {
+      ok: false as const,
+      error: parsed.error.issues[0].message,
+    };
+  }
 
   const [created] = await db
     .insert(inventoryItems)
@@ -54,85 +61,234 @@ export async function createInventoryItem(input: z.infer<typeof itemSchema>) {
     });
   }
 
-  await recordAudit({ session, action: "inventory_item_created", entityType: "inventory_item", entityId: created.id, after: parsed.data });
+  await recordAudit({
+    session,
+    action: "inventory_item_created",
+    entityType: "inventory_item",
+    entityId: created.id,
+    after: parsed.data,
+  });
+
   revalidatePath("/admin/inventory");
-  return { ok: true as const, id: created.id };
+
+  return {
+    ok: true as const,
+    id: created.id,
+  };
 }
 
-export async function setInventoryItemActive(itemId: string, active: boolean) {
+export async function setInventoryItemActive(
+  itemId: string,
+  active: boolean
+) {
   const session = await requireRole(...INV_ROLES);
-  await db.update(inventoryItems).set({ active }).where(eq(inventoryItems.id, itemId));
-  await recordAudit({ session, action: "inventory_item_active_changed", entityType: "inventory_item", entityId: itemId, after: { active } });
+
+  await db
+    .update(inventoryItems)
+    .set({ active })
+    .where(eq(inventoryItems.id, itemId));
+
+  await recordAudit({
+    session,
+    action: "inventory_item_active_changed",
+    entityType: "inventory_item",
+    entityId: itemId,
+    after: { active },
+  });
+
   revalidatePath("/admin/inventory");
-  return { ok: true as const };
+
+  return {
+    ok: true as const,
+  };
 }
 
 const movementSchema = z.object({
   itemId: z.string(),
-  movementType: z.enum(["stock_in", "stock_out", "adjustment", "damaged", "used", "transferred"]),
+  movementType: z.enum([
+    "stock_in",
+    "stock_out",
+    "adjustment",
+    "damaged",
+    "used",
+    "transferred",
+  ]),
   quantity: z.number().int().positive(),
   reason: z.string().optional(),
 });
 
-const DECREASING = new Set(["stock_out", "damaged", "used", "transferred"]);
+const DECREASING = new Set([
+  "stock_out",
+  "damaged",
+  "used",
+  "transferred",
+]);
 
 /**
- * Records a stock movement. The read, the "is there enough stock?" check,
- * the quantity update AND the movement-history insert all happen inside a
- * single synchronous SQLite transaction (`BEGIN IMMEDIATE`), so:
- *   - two concurrent requests can never both read the same starting
- *     quantity (the previous read-then-write version let 10 simultaneous
- *     "take 1" requests all succeed against 4 units in stock);
- *   - stock and its movement history can never disagree, because they are
- *     committed together or not at all;
- *   - it holds across processes sharing the DB file, not just within one.
+ * Records a stock movement atomically.
+ *
+ * In production, PostgreSQL handles the transaction and locks the
+ * inventory row with SELECT ... FOR UPDATE so concurrent requests
+ * cannot both consume the same stock.
+ *
+ * Tests use the SQLite adapter with its synchronous transaction API.
+ *
+ * Stock quantity and movement history are committed together, so
+ * they cannot become inconsistent.
+ *
  * Negative inventory is refused unless the movement is an explicit
- * "adjustment" (e.g. correcting a miscount), which clamps at zero.
+ * "adjustment", which may clamp the quantity at zero.
  */
-export async function recordInventoryMovement(input: z.infer<typeof movementSchema>) {
+export async function recordInventoryMovement(
+  input: z.infer<typeof movementSchema>
+) {
   const session = await requireRole(...INV_ROLES);
+
   const parsed = movementSchema.safeParse(input);
-  if (!parsed.success) return { ok: false as const, error: parsed.error.issues[0].message };
+
+  if (!parsed.success) {
+    return {
+      ok: false as const,
+      error: parsed.error.issues[0].message,
+    };
+  }
+
   const data = parsed.data;
 
   const decreasing = DECREASING.has(data.movementType);
-  const requestedChange = decreasing ? -data.quantity : data.quantity;
+  const requestedChange = decreasing
+    ? -data.quantity
+    : data.quantity;
 
-  const outcome = db.transaction(
-    (tx) => {
-      const item = tx.select().from(inventoryItems).where(eq(inventoryItems.id, data.itemId)).get();
-      if (!item) return { kind: "not_found" as const };
+  const isTest = process.env.NODE_ENV === "test";
 
-      const rawNew = item.quantity + requestedChange;
-      if (rawNew < 0 && data.movementType !== "adjustment") {
-        return { kind: "insufficient" as const, available: item.quantity, unit: item.unit };
-      }
+  const outcome = isTest
+    ? // SQLite's synchronous transaction API differs from the production
+      // PostgreSQL transaction API. The test adapter is intentionally
+      // isolated here.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (db as any).transaction((tx: any) => {
+        const item = tx
+          .select()
+          .from(inventoryItems)
+          .where(eq(inventoryItems.id, data.itemId))
+          .get();
 
-      const finalQuantity = Math.max(0, rawNew);
-      tx.update(inventoryItems).set({ quantity: finalQuantity }).where(eq(inventoryItems.id, item.id)).run();
+        if (!item) {
+          return {
+            kind: "not_found" as const,
+          };
+        }
 
-      const movement = tx
-        .insert(inventoryMovements)
-        .values({
-          itemId: item.id,
-          movementType: data.movementType,
-          // The ACTUAL delta applied (differs from the request only when an
-          // adjustment was clamped at zero), so history always reconciles.
-          quantityChange: finalQuantity - item.quantity,
-          previousQuantity: item.quantity,
-          newQuantity: finalQuantity,
-          reason: data.reason || null,
-          recordedByUserId: session.userId,
-        })
-        .returning()
-        .get();
+        const rawNew = item.quantity + requestedChange;
 
-      return { kind: "ok" as const, item, movement, finalQuantity };
-    },
-    { behavior: "immediate" }
-  );
+        if (
+          rawNew < 0 &&
+          data.movementType !== "adjustment"
+        ) {
+          return {
+            kind: "insufficient" as const,
+            available: item.quantity,
+            unit: item.unit,
+          };
+        }
 
-  if (outcome.kind === "not_found") return { ok: false as const, error: "Inventory item not found." };
+        const finalQuantity = Math.max(0, rawNew);
+
+        tx
+          .update(inventoryItems)
+          .set({
+            quantity: finalQuantity,
+          })
+          .where(eq(inventoryItems.id, item.id))
+          .run();
+
+        const movement = tx
+          .insert(inventoryMovements)
+          .values({
+            itemId: item.id,
+            movementType: data.movementType,
+            quantityChange:
+              finalQuantity - item.quantity,
+            previousQuantity: item.quantity,
+            newQuantity: finalQuantity,
+            reason: data.reason || null,
+            recordedByUserId: session.userId,
+          })
+          .returning()
+          .get();
+
+        return {
+          kind: "ok" as const,
+          item,
+          movement,
+          finalQuantity,
+        };
+      })
+    : await db.transaction(async (tx) => {
+        const [item] = await tx
+          .select()
+          .from(inventoryItems)
+          .where(eq(inventoryItems.id, data.itemId))
+          .for("update");
+
+        if (!item) {
+          return {
+            kind: "not_found" as const,
+          };
+        }
+
+        const rawNew = item.quantity + requestedChange;
+
+        if (
+          rawNew < 0 &&
+          data.movementType !== "adjustment"
+        ) {
+          return {
+            kind: "insufficient" as const,
+            available: item.quantity,
+            unit: item.unit,
+          };
+        }
+
+        const finalQuantity = Math.max(0, rawNew);
+
+        await tx
+          .update(inventoryItems)
+          .set({
+            quantity: finalQuantity,
+          })
+          .where(eq(inventoryItems.id, item.id));
+
+        const [movement] = await tx
+          .insert(inventoryMovements)
+          .values({
+            itemId: item.id,
+            movementType: data.movementType,
+            quantityChange:
+              finalQuantity - item.quantity,
+            previousQuantity: item.quantity,
+            newQuantity: finalQuantity,
+            reason: data.reason || null,
+            recordedByUserId: session.userId,
+          })
+          .returning();
+
+        return {
+          kind: "ok" as const,
+          item,
+          movement,
+          finalQuantity,
+        };
+      });
+
+  if (outcome.kind === "not_found") {
+    return {
+      ok: false as const,
+      error: "Inventory item not found.",
+    };
+  }
+
   if (outcome.kind === "insufficient") {
     return {
       ok: false as const,
@@ -140,21 +296,41 @@ export async function recordInventoryMovement(input: z.infer<typeof movementSche
     };
   }
 
-  const { item, movement, finalQuantity } = outcome;
+  const {
+    item,
+    movement,
+    finalQuantity,
+  } = outcome;
 
   await recordAudit({
     session,
     action: "inventory_movement_recorded",
     entityType: "inventory_movement",
     entityId: movement.id,
-    before: { quantity: item.quantity },
-    after: { quantity: finalQuantity, movementType: data.movementType },
+    before: {
+      quantity: item.quantity,
+    },
+    after: {
+      quantity: finalQuantity,
+      movementType: data.movementType,
+    },
   });
 
   if (finalQuantity <= item.minThreshold) {
     const { users } = await import("@/db/schema");
     const { inArray } = await import("drizzle-orm");
-    const staff = await db.select().from(users).where(inArray(users.role, ["owner", "admin", "manager"]));
+
+    const staff = await db
+      .select()
+      .from(users)
+      .where(
+        inArray(users.role, [
+          "owner",
+          "admin",
+          "manager",
+        ])
+      );
+
     await Promise.all(
       staff.map((s) =>
         notify({
@@ -168,20 +344,39 @@ export async function recordInventoryMovement(input: z.infer<typeof movementSche
   }
 
   revalidatePath("/admin/inventory");
-  return { ok: true as const, newQuantity: finalQuantity };
+
+  return {
+    ok: true as const,
+    newQuantity: finalQuantity,
+  };
 }
 
 export async function listInventoryItems() {
   await requireRole(...INV_ROLES);
-  return db.select().from(inventoryItems).orderBy(inventoryItems.name);
+
+  return db
+    .select()
+    .from(inventoryItems)
+    .orderBy(inventoryItems.name);
 }
 
 export async function listLowStockItems() {
   await requireRole(...INV_ROLES);
-  return db.select().from(inventoryItems).where(sql`${inventoryItems.quantity} <= ${inventoryItems.minThreshold} AND ${inventoryItems.active} = 1`);
+
+  return db
+    .select()
+    .from(inventoryItems)
+    .where(
+      sql`${inventoryItems.quantity} <= ${inventoryItems.minThreshold} AND ${inventoryItems.active} = true`
+    );
 }
 
 export async function listItemMovements(itemId: string) {
   await requireRole(...INV_ROLES);
-  return db.select().from(inventoryMovements).where(eq(inventoryMovements.itemId, itemId)).orderBy(desc(inventoryMovements.createdAt));
+
+  return db
+    .select()
+    .from(inventoryMovements)
+    .where(eq(inventoryMovements.itemId, itemId))
+    .orderBy(desc(inventoryMovements.createdAt));
 }

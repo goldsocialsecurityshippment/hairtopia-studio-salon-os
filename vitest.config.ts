@@ -11,10 +11,12 @@ export default defineConfig({
     env: {
       DATABASE_PATH: "./data/test.db",
     },
-    fileParallelism: false, // shared SQLite test DB — run test files sequentially
+    fileParallelism: false,
   },
   resolve: {
     alias: {
+      "@/db/schema": path.resolve(__dirname, "./src/db/schema.sqlite.ts"),
+      "@/db": path.resolve(__dirname, "./src/db/index.sqlite.ts"),
       "@": path.resolve(__dirname, "./src"),
     },
   },

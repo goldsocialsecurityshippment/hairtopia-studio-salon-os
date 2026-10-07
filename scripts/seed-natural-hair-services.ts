@@ -80,14 +80,12 @@ export async function seedNaturalHairServices(db: typeof defaultDb = defaultDb) 
 const isMain = process.argv[1]?.endsWith("seed-natural-hair-services.ts");
 if (isMain) {
   (async () => {
-    const { sqlite } = await import("../src/db");
     try {
       await seedNaturalHairServices();
     } catch (err) {
       console.error(err);
-      sqlite.close();
       process.exit(1);
     }
-    sqlite.close();
   })();
 }
+
