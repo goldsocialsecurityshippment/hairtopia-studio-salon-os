@@ -1,40 +1,31 @@
-﻿import { neon } from "@neondatabase/serverless";
+﻿import { db } from "@/db";
+import { users } from "@/db/schema";
+import { eq, or } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const databaseUrl = process.env.NEON_DATABASE_URL;
+    const identifier = "nikinuel@gmail.com";
 
-    if (!databaseUrl) {
-      return NextResponse.json(
-        { ok: false, error: "NEON_DATABASE_URL is missing" },
-        { status: 500 }
-      );
-    }
-
-    const sql = neon(databaseUrl);
-
-    const rows = await sql`
-      SELECT
-        current_database() AS database_name,
-        current_schema() AS schema_name,
-        COUNT(*)::int AS user_count
-      FROM users
-    `;
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(or(eq(users.email, identifier), eq(users.phone, identifier)));
 
     return NextResponse.json({
       ok: true,
-      database: rows[0]?.database_name ?? null,
-      schema: rows[0]?.schema_name ?? null,
-      userCount: rows[0]?.user_count ?? null,
+      found: !!user,
+      role: user?.role ?? null,
+      active: user?.active ?? null,
+      name: user?.name ?? null,
     });
   } catch (error) {
-    console.error("Production database diagnostic failed:", error);
+    console.error("Drizzle authentication diagnostic failed:", error);
 
     return NextResponse.json(
-      { ok: false, error: "Database diagnostic failed" },
+      { ok: false, error: "Drizzle diagnostic failed" },
       { status: 500 }
     );
   }
