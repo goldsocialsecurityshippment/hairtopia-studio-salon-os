@@ -20,6 +20,7 @@ const TYPE_TO_CATEGORY: Record<string, keyof typeof DEFAULT_PREFS> = {
   deposit_reminder: "reminderEvents",
   payment_received: "paymentEvents",
   payment_failed: "paymentEvents",
+  payment_proof_submitted: "paymentEvents",
   consultation_requested: "consultationEvents",
   consultation_update: "consultationEvents",
   consultation_assigned: "consultationEvents",

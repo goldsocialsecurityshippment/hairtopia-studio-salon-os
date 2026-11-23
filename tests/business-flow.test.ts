@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { db } from "@/db";
-import { users, services, serviceCategories, staffProfiles, stylistServices, availability, notifications, appointments, reviews, auditLogs } from "@/db/schema";
+import { users, services, serviceCategories, staffProfiles, stylistServices, availability, notifications, appointments, reviews, auditLogs, paymentProofs } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { createAppointment } from "@/lib/actions/booking";
 import { getActiveServiceTerms } from "@/lib/actions/service-terms";
-import { confirmMomoCallback, initiateCustomerDeposit } from "@/lib/actions/payments";
+import { reviewMobileMoneyProof, submitMobileMoneyProof } from "@/lib/actions/payment-proofs";
 import { requestReschedule, resolveRescheduleRequest } from "@/lib/actions/reschedule";
 import { getActiveStylists, getPublicReviewsForStylist } from "@/lib/data/queries";
 import { makeUser } from "./helpers";
@@ -86,24 +86,33 @@ describe("Full business flow: Bridal Makeup journey, reschedule, review → rati
     signOut();
   });
 
-  it("STEP 10-11: payment — MoMo not configured fails honestly; once 'live' (stubbed), a verified callback confirms the booking and updates balance", async () => {
-    delete process.env.MTN_MOMO_API_USER;
-    const unconfigured = await initiateCustomerDeposit({ appointmentId, customerPhone: "0201234567", momoNumber: "0201234567" });
-    expect(unconfigured.ok).toBe(false);
+  it("STEP 10-11: an online booking stays pending until staff approve the uploaded Mobile Money screenshot", async () => {
+    const [proof] = await db.insert(paymentProofs).values({
+      appointmentId,
+      amountType: "deposit",
+      amount: 100,
+      mimeType: "image/jpeg",
+      data: Buffer.from([0xff, 0xd8, 0xff, 0x00]),
+      status: "uploaded",
+    }).returning();
+    const { signInAs, signOut } = await import("./helpers");
+    await signInAs({ id: bridalCustomer.id, role: "customer", name: bridalCustomer.name });
+    const submitted = await submitMobileMoneyProof({ appointmentId, customerPhone: "0201234567", proofId: proof.id });
+    expect(submitted.ok).toBe(true);
+    const [awaitingReview] = await db.select().from(appointments).where(eq(appointments.id, appointmentId));
+    expect(awaitingReview.status).toBe("pending");
+    expect(awaitingReview.depositPaid).toBe(0);
+    signOut();
 
-    process.env.MTN_MOMO_API_USER = "t"; process.env.MTN_MOMO_API_KEY = "t"; process.env.MTN_MOMO_SUBSCRIPTION_KEY = "t";
-    const attempt = await initiateCustomerDeposit({ appointmentId, customerPhone: "0201234567", momoNumber: "0201234567" });
-    expect(attempt.ok).toBe(true);
-    if (!attempt.ok) return;
-    expect(attempt.status).toBe("pending"); // never immediately "successful" from our own code
-
-    const cb = await confirmMomoCallback({ referenceId: attempt.transactionReference, status: "SUCCESSFUL", financialTransactionId: "SIM1" });
-    expect(cb.ok).toBe(true);
-
-    const [appt] = await db.select().from(appointments).where(eq(appointments.id, appointmentId));
-    expect(appt.status).toBe("confirmed");
-    expect(appt.depositPaid).toBe(100);
-    expect(appt.balanceDue).toBe(1400);
+    const manager = await makeUser("manager", "Flow Payment Reviewer");
+    await signInAs({ id: manager.id, role: "manager", name: "m" });
+    const review = await reviewMobileMoneyProof({ proofId: proof.id, decision: "approve" });
+    expect(review.ok).toBe(true);
+    const [approved] = await db.select().from(appointments).where(eq(appointments.id, appointmentId));
+    expect(approved.status).toBe("confirmed");
+    expect(approved.depositPaid).toBe(100);
+    expect(approved.balanceDue).toBe(1400);
+    signOut();
   });
 
   it("STEP 12-13: both the customer and the assigned Makeup Artist receive real notifications", async () => {

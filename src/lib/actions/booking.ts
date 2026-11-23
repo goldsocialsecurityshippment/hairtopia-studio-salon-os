@@ -135,7 +135,7 @@ const bookingSchema = z.object({
 });
 
 export type BookingResult =
-  | { ok: true; appointmentId: string; depositRequired: number }
+  | { ok: true; appointmentId: string; depositRequired: number; priceEstimate: number }
   | { ok: false; error: string };
 
 export async function createAppointment(input: z.infer<typeof bookingSchema>): Promise<BookingResult> {
@@ -230,7 +230,9 @@ export async function createAppointment(input: z.infer<typeof bookingSchema>): P
       priceEstimate: price,
       instructions: data.instructions || null,
       source: "online",
-      status: depositRequired > 0 ? "pending" : "confirmed",
+      // Every online booking stays pending until staff approve a submitted
+      // Mobile Money proof (even if no deposit is configured).
+      status: "pending",
       depositRequired,
       depositPaid: 0,
       balanceDue: price,
@@ -245,10 +247,9 @@ export async function createAppointment(input: z.infer<typeof bookingSchema>): P
     status: appointment.status,
     changedByUserId: session?.userId ?? null,
     changedByRole: session?.role ?? "customer",
-    note:
-      depositRequired > 0
-        ? `Booking created online — awaiting GH₵${depositRequired} deposit.`
-        : "Booking created online.",
+    note: depositRequired > 0
+      ? `Booking created online — awaiting GH₵${depositRequired} deposit proof review.`
+      : `Booking created online — awaiting full payment proof review (GH₵${price}).`,
   });
 
   if (data.referenceUrls?.length) {
@@ -266,7 +267,7 @@ export async function createAppointment(input: z.infer<typeof bookingSchema>): P
     action: "appointment_created",
     entityType: "appointment",
     entityId: appointment.id,
-    after: { status: "confirmed", stylistId: data.stylistId, date: data.date, time: data.time },
+    after: { status: "pending", stylistId: data.stylistId, date: data.date, time: data.time },
   });
 
   await notify({
@@ -275,6 +276,7 @@ export async function createAppointment(input: z.infer<typeof bookingSchema>): P
     title: "New appointment booked",
     body: `${data.customerName} booked ${service.name} on ${data.date} at ${data.time}.`,
     relatedAppointmentId: appointment.id,
+    url: "/stylist",
   });
 
   const admins = await db.select().from(users).where(inArray(users.role, ["manager", "owner", "admin"]));
@@ -286,6 +288,7 @@ export async function createAppointment(input: z.infer<typeof bookingSchema>): P
         title: "New booking",
         body: `${data.customerName} booked ${service.name} with a stylist on ${data.date} at ${data.time}.`,
         relatedAppointmentId: appointment.id,
+        url: "/admin/appointments",
       })
     )
   );
@@ -294,7 +297,7 @@ export async function createAppointment(input: z.infer<typeof bookingSchema>): P
   revalidatePath("/stylist");
   revalidatePath("/admin");
 
-  return { ok: true, appointmentId: appointment.id, depositRequired };
+  return { ok: true, appointmentId: appointment.id, depositRequired, priceEstimate: price };
 }
 
 /** Walk-in / QR appointment: same table, marked with source, joins the live queue. */
@@ -396,7 +399,7 @@ export async function createWalkIn(input: z.infer<typeof walkinSchema>): Promise
   revalidatePath("/admin");
   revalidatePath("/admin/queue");
 
-  return { ok: true, appointmentId: appointment.id, depositRequired: 0 };
+  return { ok: true, appointmentId: appointment.id, depositRequired: 0, priceEstimate: price };
 }
 
 export async function markCustomerArrived(params: {

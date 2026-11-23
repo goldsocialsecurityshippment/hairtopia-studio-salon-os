@@ -101,6 +101,18 @@ describe("Availability, duplicate-booking prevention, and deposit", () => {
     expect(appt.status).toBe("pending"); // NOT confirmed until the deposit is actually paid
   });
 
+  it("keeps a no-deposit online booking pending until full payment proof is approved", async () => {
+    await db.update(salonSettings).set({ depositEnabled: false }).where(eq(salonSettings.id, "main"));
+    const result = await createAppointment(baseBooking({ date: "2027-03-29", time: "11:00", customerPhone: "0209991120" }));
+    await db.update(salonSettings).set({ depositEnabled: true }).where(eq(salonSettings.id, "main"));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const [appt] = await db.select().from(appointments).where(eq(appointments.id, result.appointmentId));
+    expect(appt.depositRequired).toBe(0);
+    expect(appt.status).toBe("pending");
+    expect(result.priceEstimate).toBe(200);
+  });
+
   it("the just-booked slot is no longer offered, and a second booking on it is rejected server-side", async () => {
     const slots = await getAvailableSlots({ stylistId: makeupArtist.id, serviceId: softGlam.id, date: MONDAY });
     expect(slots).not.toContain("09:00");

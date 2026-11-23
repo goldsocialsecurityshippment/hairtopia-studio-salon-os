@@ -9,6 +9,7 @@ const NAV = [
   { href: "/admin", label: "Overview", roles: ["manager", "owner", "admin"] },
   { href: "/admin/queue", label: "Queue", roles: ["manager", "owner", "admin"] },
   { href: "/admin/appointments", label: "Appointments", roles: ["manager", "owner", "admin"] },
+  { href: "/admin/payment-review", label: "Payment review", roles: ["manager", "owner", "admin"] },
   { href: "/admin/requests", label: "Pending requests", roles: ["manager", "owner", "admin"] },
   { href: "/admin/clients", label: "Clients", roles: ["manager", "owner", "admin"] },
   { href: "/admin/consultations", label: "Consultations", roles: ["manager", "owner", "admin"] },

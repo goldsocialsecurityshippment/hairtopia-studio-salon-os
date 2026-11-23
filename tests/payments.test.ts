@@ -22,11 +22,11 @@ beforeAll(async () => {
 });
 afterEach(() => signOut());
 
-async function newAppt(price = 250, depositRequired = 100) {
+async function newAppt(price = 250, depositRequired = 100, source: "online" | "walk_in" = "walk_in") {
   const [a] = await db.insert(appointments).values({
     customerId: customer.id, customerName: customer.name, customerPhone: "+233200000001",
     serviceId, stylistId: stylist.id, scheduledDate: "2027-05-01", scheduledTime: "10:00",
-    durationMinutes: 60, priceEstimate: price, status: "pending",
+    durationMinutes: 60, priceEstimate: price, status: "pending", source,
     depositRequired, depositPaid: 0, balanceDue: price,
   }).returning();
   return a.id;
@@ -44,6 +44,16 @@ describe("Manual payments and deposit → confirmation gating", () => {
     expect(a.depositPaid).toBe(100);
     expect(a.balanceDue).toBe(150);
     expect(a.paymentStatus).toBe("partial");
+  });
+
+  it("cash recorded against an online booking does not confirm it without approved screenshot proof", async () => {
+    const id = await newAppt(250, 100, "online");
+    await signInAs({ id: manager.id, role: "manager", name: "m" });
+    const r = await recordPayment({ appointmentId: id, amount: 100, method: "cash", paymentType: "deposit" });
+    expect(r.ok).toBe(true);
+    const a = await get(id);
+    expect(a.status).toBe("pending");
+    expect(a.depositPaid).toBe(100);
   });
 
   it("a deposit SMALLER than the required amount does NOT confirm the booking", async () => {
@@ -89,7 +99,7 @@ describe("Manual payments and deposit → confirmation gating", () => {
 describe("Mobile money: no payment, no confirmation", () => {
   it("MoMo NOT configured: the attempt fails, no payment row is created, booking stays pending", async () => {
     delete process.env.MTN_MOMO_API_USER; delete process.env.MTN_MOMO_API_KEY; delete process.env.MTN_MOMO_SUBSCRIPTION_KEY;
-    const id = await newAppt();
+    const id = await newAppt(250, 100, "online");
     await signInAs({ id: manager.id, role: "manager", name: "m" });
     const r = await recordPayment({ appointmentId: id, amount: 100, method: "mobile_money", paymentType: "deposit" });
     expect(r.ok).toBe(false);
@@ -103,7 +113,7 @@ describe("Mobile money: no payment, no confirmation", () => {
     });
 
     it("a MoMo request is recorded as PENDING and does NOT confirm the booking or reduce the balance", async () => {
-      const id = await newAppt();
+      const id = await newAppt(250, 100, "online");
       await signInAs({ id: manager.id, role: "manager", name: "m" });
       const r = await recordPayment({ appointmentId: id, amount: 100, method: "mobile_money", paymentType: "deposit" });
       expect(r.ok).toBe(true);
@@ -115,7 +125,7 @@ describe("Mobile money: no payment, no confirmation", () => {
     });
 
     it("only a provider callback marks it successful; the browser/UI cannot", async () => {
-      const id = await newAppt();
+      const id = await newAppt(250, 100, "online");
       await signInAs({ id: manager.id, role: "manager", name: "m" });
       const r = await recordPayment({ appointmentId: id, amount: 100, method: "mobile_money", paymentType: "deposit" });
       if (!r.ok) throw new Error("setup");
@@ -123,12 +133,12 @@ describe("Mobile money: no payment, no confirmation", () => {
       const cb = await confirmMomoCallback({ referenceId: r.transactionReference, status: "SUCCESSFUL", financialTransactionId: "F1" });
       expect(cb.ok).toBe(true);
       const a = await get(id);
-      expect(a.status).toBe("confirmed");
+      expect(a.status).toBe("pending"); // provider callbacks cannot replace staff proof review for online bookings
       expect(a.depositPaid).toBe(100);
     });
 
     it("a FAILED callback leaves the booking pending and unpaid", async () => {
-      const id = await newAppt();
+      const id = await newAppt(250, 100, "online");
       await signInAs({ id: manager.id, role: "manager", name: "m" });
       const r = await recordPayment({ appointmentId: id, amount: 100, method: "mobile_money", paymentType: "deposit" });
       if (!r.ok) throw new Error("setup");
@@ -142,7 +152,7 @@ describe("Mobile money: no payment, no confirmation", () => {
     });
 
     it("8 SIMULTANEOUS identical SUCCESSFUL callbacks apply the deposit exactly once", async () => {
-      const id = await newAppt();
+      const id = await newAppt(250, 100, "online");
       await signInAs({ id: manager.id, role: "manager", name: "m" });
       const r = await recordPayment({ appointmentId: id, amount: 100, method: "mobile_money", paymentType: "deposit" });
       if (!r.ok) throw new Error("setup");
@@ -214,7 +224,7 @@ describe("Customer self-service deposit (booking wizard payment step)", () => {
   it("without MoMo configured, the attempt honestly fails — never fakes a prompt", async () => {
     delete process.env.MTN_MOMO_API_USER; delete process.env.MTN_MOMO_API_KEY; delete process.env.MTN_MOMO_SUBSCRIPTION_KEY;
     const { initiateCustomerDeposit } = await import("@/lib/actions/payments");
-    const id = await newAppt();
+    const id = await newAppt(250, 100, "online");
     const r = await initiateCustomerDeposit({ appointmentId: id, customerPhone: "0200000001", momoNumber: "0200000001" });
     expect(r.ok).toBe(false);
   });
@@ -222,17 +232,17 @@ describe("Customer self-service deposit (booking wizard payment step)", () => {
   it("rejects a caller whose phone does not match the booking and who isn't its owner", async () => {
     process.env.MTN_MOMO_API_USER = "t"; process.env.MTN_MOMO_API_KEY = "t"; process.env.MTN_MOMO_SUBSCRIPTION_KEY = "t";
     const { initiateCustomerDeposit } = await import("@/lib/actions/payments");
-    const id = await newAppt();
+    const id = await newAppt(250, 100, "online");
     const r = await initiateCustomerDeposit({ appointmentId: id, customerPhone: "0299999999", momoNumber: "0299999999" });
     expect(r.ok).toBe(false);
   });
 
-  it("with the matching phone, a MoMo request is accepted as PENDING and does not confirm the booking by itself", async () => {
+  it("with the matching phone, direct MoMo prompts are disabled for online bookings in favor of required screenshot review", async () => {
     const { initiateCustomerDeposit } = await import("@/lib/actions/payments");
-    const id = await newAppt();
+    const id = await newAppt(250, 100, "online");
     const r = await initiateCustomerDeposit({ appointmentId: id, customerPhone: "+233200000001", momoNumber: "0200000001" });
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.status).toBe("pending");
+    expect(r.ok).toBe(false);
+    expect((await db.select().from(payments).where(eq(payments.appointmentId, id))).length).toBe(0);
     expect((await get(id)).status).toBe("pending");
   });
 });

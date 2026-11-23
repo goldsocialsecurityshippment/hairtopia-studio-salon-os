@@ -1,5 +1,7 @@
-import { pgTable, text, integer, real, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, real, boolean, customType } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+
+const binaryData = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => "bytea" });
 
 const id = () => text("id").primaryKey().$defaultFn(() => crypto.randomUUID());
 const createdAt = () => text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`);
@@ -263,6 +265,25 @@ export const payments = pgTable("payments", {
     .default("none"),
   refundedAmount: real("refunded_amount").notNull().default(0),
   providerResponseMetadata: text("provider_response_metadata"), // JSON string, no secrets
+});
+
+/** Private mobile-money screenshots. Binary data is stored in Neon/Postgres,
+ * never in a public URL or the ephemeral Vercel filesystem. */
+export const paymentProofs = pgTable("payment_proofs", {
+  id: id(),
+  appointmentId: text("appointment_id").notNull().references(() => appointments.id),
+  amountType: text("amount_type", { enum: ["deposit", "full"] }).notNull(),
+  amount: real("amount").notNull(),
+  mimeType: text("mime_type", { enum: ["image/jpeg", "image/png", "image/webp"] }).notNull(),
+  data: binaryData("data").notNull(),
+  status: text("status", { enum: ["uploaded", "pending", "approved", "rejected"] }).notNull().default("uploaded"),
+  paymentId: text("payment_id").references(() => payments.id),
+  submittedByUserId: text("submitted_by_user_id"),
+  submittedAt: text("submitted_at"),
+  reviewedByUserId: text("reviewed_by_user_id"),
+  reviewedAt: text("reviewed_at"),
+  reviewNote: text("review_note"),
+  createdAt: createdAt(),
 });
 
 /** ---------- REVIEWS ---------- */
@@ -676,4 +697,3 @@ export const inventoryMovements = pgTable("inventory_movements", {
   recordedByUserId: text("recorded_by_user_id").notNull(),
   createdAt: createdAt(),
 });
-

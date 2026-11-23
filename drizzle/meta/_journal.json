@@ -8,6 +8,13 @@
       "when": 1791396800480,
       "tag": "0000_optimal_mindworm",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1795356535438,
+      "tag": "0001_private_payment_proofs",
+      "breakpoints": true
     }
   ]
 }

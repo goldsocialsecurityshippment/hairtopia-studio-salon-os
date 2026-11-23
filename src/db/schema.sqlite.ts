@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, blob } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 const id = () => text("id").primaryKey().$defaultFn(() => crypto.randomUUID());
@@ -263,6 +263,25 @@ export const payments = sqliteTable("payments", {
     .default("none"),
   refundedAmount: real("refunded_amount").notNull().default(0),
   providerResponseMetadata: text("provider_response_metadata"), // JSON string, no secrets
+});
+
+/** Test-harness mirror of the private proof store. Production stores this
+ * table in Neon/Postgres; Buffer mode keeps binary handling equivalent. */
+export const paymentProofs = sqliteTable("payment_proofs", {
+  id: id(),
+  appointmentId: text("appointment_id").notNull().references(() => appointments.id),
+  amountType: text("amount_type", { enum: ["deposit", "full"] }).notNull(),
+  amount: real("amount").notNull(),
+  mimeType: text("mime_type", { enum: ["image/jpeg", "image/png", "image/webp"] }).notNull(),
+  data: blob("data", { mode: "buffer" }).notNull(),
+  status: text("status", { enum: ["uploaded", "pending", "approved", "rejected"] }).notNull().default("uploaded"),
+  paymentId: text("payment_id").references(() => payments.id),
+  submittedByUserId: text("submitted_by_user_id"),
+  submittedAt: text("submitted_at"),
+  reviewedByUserId: text("reviewed_by_user_id"),
+  reviewedAt: text("reviewed_at"),
+  reviewNote: text("review_note"),
+  createdAt: createdAt(),
 });
 
 /** ---------- REVIEWS ---------- */

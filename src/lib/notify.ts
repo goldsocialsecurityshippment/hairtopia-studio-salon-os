@@ -13,6 +13,7 @@ export async function notify(params: {
   title: string;
   body: string;
   relatedAppointmentId?: string;
+  url?: string;
 }) {
   await db.insert(notifications).values({
     userId: params.userId,
@@ -24,7 +25,12 @@ export async function notify(params: {
 
   try {
     const { sendPushToUser } = await import("@/lib/actions/push");
-    await sendPushToUser(params.userId, { title: params.title, body: params.body, type: params.type });
+    await sendPushToUser(params.userId, {
+      title: params.title,
+      body: params.body,
+      type: params.type,
+      url: params.url,
+    });
   } catch {
     // Push is best-effort — the in-app notification above already landed.
   }

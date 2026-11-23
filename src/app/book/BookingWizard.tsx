@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getAvailableSlots, createAppointment } from "@/lib/actions/booking";
 import { getActiveServiceTerms } from "@/lib/actions/service-terms";
-import { initiateCustomerDeposit, getPaymentStatusForAppointment } from "@/lib/actions/payments";
+import { submitMobileMoneyProof } from "@/lib/actions/payment-proofs";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Input";
 import { Card } from "@/components/ui/Card";
@@ -44,7 +44,6 @@ export function BookingWizard({
   defaultPhone: string;
   preselectedStylistId?: string | null;
 }) {
-  const router = useRouter();
   const [step, setStep] = useState(0);
 
   const [serviceId, setServiceId] = useState<string | null>(null);
@@ -65,6 +64,7 @@ export function BookingWizard({
   const [error, setError] = useState<string | null>(null);
   const [confirmedId, setConfirmedId] = useState<string | null>(null);
   const [depositRequired, setDepositRequired] = useState(0);
+  const [fullAmount, setFullAmount] = useState(0);
   const [activeTerms, setActiveTerms] = useState<{ id: string; title: string; content: string; version: number } | null>(null);
   const [termsAccepted, setTermsAccepted] = useState(false);
 
@@ -151,35 +151,11 @@ export function BookingWizard({
     }
     setConfirmedId(result.appointmentId);
     setDepositRequired(result.depositRequired);
-  }
-
-  if (confirmedId && depositRequired > 0) {
-    return (
-      <DepositPaymentStep
-        appointmentId={confirmedId}
-        depositAmount={depositRequired}
-        defaultPhone={customerPhone}
-        onSkip={() => setDepositRequired(0)}
-      />
-    );
+    setFullAmount(result.priceEstimate);
   }
 
   if (confirmedId) {
-    return (
-      <Card className="mx-auto max-w-lg p-8 text-center">
-        <p className="font-display text-2xl text-ink">Booking confirmed</p>
-        <p className="mt-2 text-sm text-ink-soft">
-          {selectedService?.name} with {selectedStylist?.name} on {date} at {time}.
-        </p>
-        <p className="mt-2 text-xs text-ink-soft">
-          You can pay your deposit anytime before your appointment from your account page.
-        </p>
-        <div className="mt-6 flex justify-center gap-3">
-          <Button onClick={() => router.push(`/account/appointments/${confirmedId}`)}>View appointment</Button>
-          <Button variant="secondary" onClick={() => router.push("/")}>Back home</Button>
-        </div>
-      </Card>
-    );
+    return <PaymentProofStep appointmentId={confirmedId} depositAmount={depositRequired} fullAmount={fullAmount} defaultPhone={customerPhone} />;
   }
 
   return (
@@ -421,59 +397,81 @@ export function BookingWizard({
   );
 }
 
-/**
- * Shown right after a booking is created when a deposit is required. This
- * is the real payment step: the customer enters the MoMo number that
- * receives the prompt-to-pay, we call the actual payment provider (not a
- * fake success screen), and "confirmed" only ever comes from a genuine
- * payment result. Since live MTN credentials aren't configured yet, the
- * honest outcome today is a clear "mobile money isn't live yet" message —
- * the code path is real and ready for when the API is switched on.
- */
-function DepositPaymentStep({
+/** A booking stays pending until staff approve the uploaded transfer proof. */
+function PaymentProofStep({
   appointmentId,
   depositAmount,
+  fullAmount,
   defaultPhone,
-  onSkip,
 }: {
   appointmentId: string;
   depositAmount: number;
+  fullAmount: number;
   defaultPhone: string;
-  onSkip: () => void;
 }) {
   const router = useRouter();
-  const [momoNumber, setMomoNumber] = useState(defaultPhone);
-  const [pending, setPending] = useState(false);
+  const [customerPhone, setCustomerPhone] = useState(defaultPhone);
+  const [amountType, setAmountType] = useState<"deposit" | "full">(depositAmount > 0 ? "deposit" : "full");
+  const [file, setFile] = useState<File | null>(null);
+  const [proofId, setProofId] = useState<string | null>(null);
+  const [proofAmount, setProofAmount] = useState<number | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<"idle" | "prompted" | "paid" | "failed">("idle");
 
-  async function requestPayment() {
-    setPending(true);
+  function changeAmountType(next: "deposit" | "full") {
+    setAmountType(next);
+    setProofId(null);
+    setProofAmount(null);
     setError(null);
-    const result = await initiateCustomerDeposit({ appointmentId, customerPhone: defaultPhone, momoNumber });
-    setPending(false);
-    if (!result.ok) {
-      setError(result.error);
-      return;
-    }
-    setStatus(result.status === "paid" ? "paid" : result.status === "failed" ? "failed" : "prompted");
   }
 
-  async function checkStatus() {
-    setPending(true);
-    const s = await getPaymentStatusForAppointment(appointmentId);
-    setPending(false);
-    if (s && (s.status === "confirmed" || s.depositPaid >= s.depositRequired)) {
-      setStatus("paid");
+  async function uploadProof() {
+    if (!file) return;
+    setUploading(true);
+    setError(null);
+    try {
+      const form = new FormData();
+      form.append("appointmentId", appointmentId);
+      form.append("customerPhone", customerPhone);
+      form.append("amountType", amountType);
+      form.append("file", file);
+      const response = await fetch("/api/payment-proofs", { method: "POST", body: form });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Screenshot upload failed.");
+      setProofId(result.proofId);
+      setProofAmount(result.amount);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Screenshot upload failed.");
+    } finally {
+      setUploading(false);
     }
   }
 
-  if (status === "paid") {
+  async function submitProof() {
+    if (!proofId) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const result = await submitMobileMoneyProof({ appointmentId, customerPhone, proofId });
+      if (!result.ok) throw new Error(result.error);
+      setSubmitted(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "The proof could not be submitted.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (submitted) {
     return (
       <Card className="mx-auto max-w-lg p-8 text-center">
-        <p className="font-display text-2xl text-ink">Payment received — booking confirmed</p>
-        <div className="mt-6 flex justify-center gap-3">
+        <p className="font-display text-2xl text-ink">Payment proof submitted</p>
+        <p className="mt-3 text-sm text-ink-soft">Your booking is pending while the salon reviews your Mobile Money screenshot. We&apos;ll update you when it has been reviewed.</p>
+        <div className="mt-6 flex flex-wrap justify-center gap-3">
           <Button onClick={() => router.push(`/account/appointments/${appointmentId}`)}>View appointment</Button>
+          <Button variant="secondary" onClick={() => router.push("/book")}>Start another appointment</Button>
         </div>
       </Card>
     );
@@ -481,31 +479,41 @@ function DepositPaymentStep({
 
   return (
     <Card className="mx-auto max-w-lg p-8">
-      <p className="font-display text-xl text-ink">Pay your GH₵{depositAmount} deposit</p>
-      <p className="mt-1 text-sm text-ink-soft">
-        Your booking is held, but not yet confirmed, until this deposit is paid.
-      </p>
+      <p className="font-display text-xl text-ink">Send Mobile Money and upload proof</p>
+      <p className="mt-1 text-sm text-ink-soft">Your appointment remains pending until staff verify your screenshot. Transfer to the recipient below, then upload the payment confirmation.</p>
+      <div className="mt-4 rounded-sm border border-bronze-200 bg-bronze-50/60 p-4 text-sm text-ink">
+        <p><span className="text-ink-soft">MoMo number:</span> <strong>0501223210</strong></p>
+        <p className="mt-1"><span className="text-ink-soft">Recipient:</span> <strong>Diane Nikita Nuel</strong></p>
+      </div>
 
-      {status === "prompted" ? (
-        <div className="mt-5 rounded-sm border border-bronze-200 bg-bronze-50/50 p-4 text-sm text-ink">
-          <p>Check your phone at <strong>{momoNumber}</strong> and approve the payment prompt.</p>
-          <div className="mt-3 flex gap-2">
-            <Button size="sm" loading={pending} onClick={checkStatus}>I&apos;ve paid — check status</Button>
-          </div>
+      <div className="mt-5 space-y-4">
+        <fieldset>
+          <legend className="mb-2 text-sm font-medium text-ink">Choose payment amount</legend>
+          {depositAmount > 0 && (
+            <label className="flex cursor-pointer items-center gap-2 rounded-sm border border-line p-3 text-sm text-ink">
+              <input type="radio" name="proof-amount" checked={amountType === "deposit"} onChange={() => changeAmountType("deposit")} />
+              Deposit — GH₵{depositAmount.toFixed(2)}
+            </label>
+          )}
+          <label className="mt-2 flex cursor-pointer items-center gap-2 rounded-sm border border-line p-3 text-sm text-ink">
+            <input type="radio" name="proof-amount" checked={amountType === "full"} onChange={() => changeAmountType("full")} />
+            Full outstanding amount — GH₵{fullAmount.toFixed(2)}
+          </label>
+        </fieldset>
+        <Input label="Phone number on your booking" value={customerPhone} onChange={(e) => { setCustomerPhone(e.target.value); setProofId(null); setProofAmount(null); }} required />
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-ink" htmlFor="payment-proof-image">Payment screenshot (JPG, PNG or WEBP; maximum 8MB)</label>
+          <input id="payment-proof-image" type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => { setFile(e.target.files?.[0] ?? null); setProofId(null); setProofAmount(null); }} className="block w-full text-sm text-ink-soft file:mr-4 file:rounded-sm file:border-0 file:bg-bronze-100 file:px-4 file:py-2 file:text-sm file:font-medium file:text-bronze-600" />
         </div>
-      ) : (
-        <div className="mt-5 space-y-3">
-          <Input label="Mobile Money number" value={momoNumber} onChange={(e) => setMomoNumber(e.target.value)} />
-          {error && <p className="text-sm text-rust">{error}</p>}
-          <Button className="w-full" loading={pending} disabled={!momoNumber} onClick={requestPayment}>
-            Request payment prompt
-          </Button>
-        </div>
-      )}
-
-      <button onClick={onSkip} className="mt-4 block w-full text-center text-xs text-ink-soft underline">
-        I&apos;ll pay later / at the salon
-      </button>
+        {proofId && <p className="text-sm text-moss">Screenshot uploaded privately. Amount due: GH₵{proofAmount?.toFixed(2)}.</p>}
+        {error && <p className="text-sm text-rust">{error}</p>}
+        {!proofId ? (
+          <Button className="w-full" loading={uploading} disabled={!file || customerPhone.trim().length < 9} onClick={uploadProof}>Upload screenshot</Button>
+        ) : (
+          <Button className="w-full" loading={submitting} disabled={!proofId} onClick={submitProof}>Submit payment proof for review</Button>
+        )}
+        <p className="text-xs text-ink-soft">The amount is checked against your booking on the server. A screenshot is required; the browser cannot mark a payment or appointment as paid.</p>
+      </div>
     </Card>
   );
 }

@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { payments, appointments } from "@/db/schema";
+import { payments, appointments, paymentProofs } from "@/db/schema";
 import { eq, and, notInArray } from "drizzle-orm";
 import { requireRole, getSession } from "@/lib/auth/session";
 import { recordAudit } from "@/lib/audit";
@@ -142,7 +142,7 @@ export async function recordPayment(input: z.infer<typeof recordPaymentSchema>) 
  * once, and is exactly what makes a refund correctly restore the balance
  * too — a refunded payment simply stops counting as "paid".
  */
-async function recomputeAppointmentPaymentState(appointmentId: string) {
+export async function recomputeAppointmentPaymentState(appointmentId: string) {
   const [appt] = await db.select().from(appointments).where(eq(appointments.id, appointmentId));
   if (!appt) return;
 
@@ -166,7 +166,23 @@ async function recomputeAppointmentPaymentState(appointmentId: string) {
   // deposit (or the whole price, if no deposit is configured) —
   // regardless of whether it arrived as one "deposit" payment, several
   // partials, or a single "full" payment.
-  const meetsDepositRequirement = appt.depositRequired <= 0 || totalPaid >= appt.depositRequired;
+  let meetsDepositRequirement: boolean;
+  if (appt.source === "online") {
+    // Online bookings are only released after staff approve a submitted
+    // screenshot. A provider callback or staff-entered cash row alone is not
+    // sufficient to confirm this booking.
+    const approvedProofRows = await db.select({ paymentId: paymentProofs.paymentId })
+      .from(paymentProofs)
+      .where(and(eq(paymentProofs.appointmentId, appointmentId), eq(paymentProofs.status, "approved")));
+    const approvedPaymentIds = new Set(approvedProofRows.map((proof) => proof.paymentId).filter(Boolean));
+    const verifiedTotal = successfulPayments
+      .filter((payment) => approvedPaymentIds.has(payment.id))
+      .reduce((sum, payment) => sum + (payment.amount - payment.refundedAmount), 0);
+    const required = appt.depositRequired > 0 ? appt.depositRequired : appt.priceEstimate;
+    meetsDepositRequirement = verifiedTotal >= required;
+  } else {
+    meetsDepositRequirement = appt.depositRequired <= 0 || totalPaid >= appt.depositRequired;
+  }
   const newApptStatus = appt.status === "pending" && meetsDepositRequirement ? "confirmed" : appt.status;
   const justConfirmed = appt.status === "pending" && newApptStatus === "confirmed";
   const balanceJustCleared = appt.paymentStatus !== "paid" && newPaymentStatus === "paid";
@@ -321,6 +337,10 @@ export async function initiateCustomerDeposit(input: z.infer<typeof customerDepo
     return { ok: false as const, error: "We couldn't verify this booking against the details provided." };
   }
 
+  if (appt.source === "online") {
+    return { ok: false as const, error: "Online bookings require a Mobile Money screenshot and staff review. Upload your proof from the booking payment step." };
+  }
+
   if (appt.depositRequired <= 0) {
     return { ok: false as const, error: "No deposit is required for this booking." };
   }
@@ -378,8 +398,13 @@ export async function initiateCustomerDeposit(input: z.infer<typeof customerDepo
 }
 
 export async function getPaymentStatusForAppointment(appointmentId: string) {
+  const session = await getSession();
+  if (!session) return null;
   const [appt] = await db.select().from(appointments).where(eq(appointments.id, appointmentId));
   if (!appt) return null;
+  const staff = ["manager", "owner", "admin", "stylist"].includes(session.role);
+  if (!staff && (session.role !== "customer" || appt.customerId !== session.userId)) return null;
+  if (session.role === "stylist" && appt.stylistId !== session.userId) return null;
   return { status: appt.status, depositPaid: appt.depositPaid, depositRequired: appt.depositRequired, balanceDue: appt.balanceDue };
 }
 
