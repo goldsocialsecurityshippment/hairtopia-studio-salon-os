@@ -63,12 +63,8 @@ export default async function HomePage() {
                 src="/brand/hero-group.jpg"
                 alt="Hairtopia Studio styling"
                 fill
-                className="object-cover object-right"
+                className="object-cover object-center contrast-[1.12] saturate-[1.08]"
                 priority
-              />
-              <div
-                className="pointer-events-none absolute inset-y-0 left-0 w-24"
-                style={{ background: "linear-gradient(to right, #EABD9D, transparent)" }}
               />
               <div className="absolute right-8 top-8 h-44 w-44 overflow-hidden rounded-full border-4 border-white bg-white shadow-soft lg:h-52 lg:w-52">
                 <Image

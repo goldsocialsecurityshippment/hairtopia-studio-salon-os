@@ -8,6 +8,13 @@ import { submitMobileMoneyProof } from "@/lib/actions/payment-proofs";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Input";
 import { Card } from "@/components/ui/Card";
+import {
+  markPendingProofBookingSubmitted,
+  parsePendingProofBookings,
+  PENDING_PROOF_BOOKINGS_STORAGE_KEY,
+  upsertPendingProofBooking,
+} from "@/lib/pending-proof-bookings";
+import type { PendingProofBooking } from "@/lib/pending-proof-bookings";
 
 type Variation = { id: string; label: string; price: number; isDefault?: boolean };
 type ServiceLite = {
@@ -62,14 +69,33 @@ export function BookingWizard({
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [confirmedId, setConfirmedId] = useState<string | null>(null);
-  const [depositRequired, setDepositRequired] = useState(0);
-  const [fullAmount, setFullAmount] = useState(0);
+  const [pendingProofBookings, setPendingProofBookings] = useState<PendingProofBooking[]>([]);
+  const [proofQueueLoaded, setProofQueueLoaded] = useState(false);
+  const [activeProofBookingId, setActiveProofBookingId] = useState<string | null>(null);
   const [activeTerms, setActiveTerms] = useState<{ id: string; title: string; content: string; version: number } | null>(null);
   const [termsAccepted, setTermsAccepted] = useState(false);
 
   const allServices = useMemo(() => categories.flatMap((c) => c.services), [categories]);
   const selectedService = allServices.find((s) => s.id === serviceId) ?? null;
+
+  useEffect(() => {
+    try {
+      setPendingProofBookings(parsePendingProofBookings(window.sessionStorage.getItem(PENDING_PROOF_BOOKINGS_STORAGE_KEY)));
+    } catch {
+      setPendingProofBookings([]);
+    }
+    setProofQueueLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (!proofQueueLoaded) return;
+    try {
+      if (pendingProofBookings.length === 0) window.sessionStorage.removeItem(PENDING_PROOF_BOOKINGS_STORAGE_KEY);
+      else window.sessionStorage.setItem(PENDING_PROOF_BOOKINGS_STORAGE_KEY, JSON.stringify(pendingProofBookings));
+    } catch {
+      // Booking remains usable when browser storage is unavailable; the queue then lasts for this page view.
+    }
+  }, [pendingProofBookings, proofQueueLoaded]);
 
   useEffect(() => {
     setTermsAccepted(false);
@@ -97,6 +123,22 @@ export function BookingWizard({
     } finally {
       setLoadingSlots(false);
     }
+  }
+
+  function startAnotherBooking() {
+    setStep(0);
+    setServiceId(null);
+    setVariationId(null);
+    setStylistId(preselectedStylistId ?? null);
+    setDate("");
+    setTime("");
+    setSlots([]);
+    setInstructions("");
+    setReferenceUrls([]);
+    setError(null);
+    setActiveTerms(null);
+    setTermsAccepted(false);
+    setActiveProofBookingId(null);
   }
 
   async function handleFileUpload(files: FileList | null) {
@@ -149,17 +191,49 @@ export function BookingWizard({
       setError(result.error);
       return;
     }
-    setConfirmedId(result.appointmentId);
-    setDepositRequired(result.depositRequired);
-    setFullAmount(result.priceEstimate);
+    const booking: PendingProofBooking = {
+      appointmentId: result.appointmentId,
+      serviceName: selectedService?.name ?? "Appointment",
+      stylistName: selectedStylist?.name ?? "Stylist",
+      date,
+      time,
+      phone: customerPhone,
+      depositAmount: result.depositRequired,
+      requiredAmount: result.depositRequired > 0 ? result.depositRequired : result.priceEstimate,
+      fullAmount: result.priceEstimate,
+      status: "awaiting-proof",
+    };
+    setPendingProofBookings((current) => upsertPendingProofBooking(current, booking));
+    setActiveProofBookingId(result.appointmentId);
   }
 
-  if (confirmedId) {
-    return <PaymentProofStep appointmentId={confirmedId} depositAmount={depositRequired} fullAmount={fullAmount} defaultPhone={customerPhone} />;
+  const activeProofBooking = pendingProofBookings.find((booking) => booking.appointmentId === activeProofBookingId) ?? null;
+
+  if (activeProofBooking) {
+    return (
+      <div className="space-y-5">
+        <PendingProofBookingList
+          bookings={pendingProofBookings}
+          activeAppointmentId={activeProofBooking.appointmentId}
+          onSelect={setActiveProofBookingId}
+        />
+        <PaymentProofStep
+          key={activeProofBooking.appointmentId}
+          appointmentId={activeProofBooking.appointmentId}
+          depositAmount={activeProofBooking.depositAmount}
+          fullAmount={activeProofBooking.fullAmount}
+          defaultPhone={activeProofBooking.phone}
+          initialSubmitted={activeProofBooking.status === "submitted"}
+          onSubmitted={() => setPendingProofBookings((current) => markPendingProofBookingSubmitted(current, activeProofBooking.appointmentId))}
+          onBookAnother={startAnotherBooking}
+        />
+      </div>
+    );
   }
 
   return (
     <div>
+      <PendingProofBookingList bookings={pendingProofBookings} activeAppointmentId={null} onSelect={setActiveProofBookingId} />
       {/* Progress */}
       <ol className="mb-8 flex flex-wrap gap-x-6 gap-y-2 text-sm">
         {STEPS.map((label, i) => (
@@ -397,17 +471,58 @@ export function BookingWizard({
   );
 }
 
+function PendingProofBookingList({
+  bookings,
+  activeAppointmentId,
+  onSelect,
+}: {
+  bookings: PendingProofBooking[];
+  activeAppointmentId: string | null;
+  onSelect: (appointmentId: string) => void;
+}) {
+  if (bookings.length === 0) return null;
+  return (
+    <Card className="mx-auto mb-6 max-w-lg p-5">
+      <h2 className="font-display text-lg text-ink">Your appointment requests</h2>
+      <p className="mt-1 text-xs text-ink-soft">Each is a separate booking and needs its own screenshot. A booking stays pending until its payment is reviewed.</p>
+      <ul className="mt-4 space-y-3">
+        {bookings.map((booking) => (
+          <li key={booking.appointmentId} className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3">
+            <div>
+              <p className="text-sm font-medium text-ink">{booking.serviceName} · {booking.stylistName}</p>
+              <p className="text-xs text-ink-soft">{booking.date} at {booking.time} · GH₵{booking.requiredAmount.toFixed(2)} minimum</p>
+            </div>
+            {booking.status === "submitted" ? (
+              <span className="text-xs text-moss">Screenshot submitted for review</span>
+            ) : booking.appointmentId === activeAppointmentId ? (
+              <span className="text-xs text-bronze-600">Adding proof now</span>
+            ) : (
+              <Button variant="secondary" size="sm" onClick={() => onSelect(booking.appointmentId)}>Upload screenshot</Button>
+            )}
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 /** A booking stays pending until staff approve the uploaded transfer proof. */
 function PaymentProofStep({
   appointmentId,
   depositAmount,
   fullAmount,
   defaultPhone,
+  initialSubmitted,
+  onSubmitted,
+  onBookAnother,
 }: {
   appointmentId: string;
   depositAmount: number;
   fullAmount: number;
   defaultPhone: string;
+  initialSubmitted: boolean;
+  onSubmitted: () => void;
+  onBookAnother: () => void;
 }) {
   const router = useRouter();
   const [customerPhone, setCustomerPhone] = useState(defaultPhone);
@@ -417,7 +532,7 @@ function PaymentProofStep({
   const [proofAmount, setProofAmount] = useState<number | null>(null);
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
+  const [submitted, setSubmitted] = useState(initialSubmitted);
   const [error, setError] = useState<string | null>(null);
 
   function changeAmountType(next: "deposit" | "full") {
@@ -457,6 +572,7 @@ function PaymentProofStep({
       const result = await submitMobileMoneyProof({ appointmentId, customerPhone, proofId });
       if (!result.ok) throw new Error(result.error);
       setSubmitted(true);
+      onSubmitted();
     } catch (err) {
       setError(err instanceof Error ? err.message : "The proof could not be submitted.");
     } finally {
@@ -471,7 +587,7 @@ function PaymentProofStep({
         <p className="mt-3 text-sm text-ink-soft">Your booking is pending while the salon reviews your Mobile Money screenshot. We&apos;ll update you when it has been reviewed.</p>
         <div className="mt-6 flex flex-wrap justify-center gap-3">
           <Button onClick={() => router.push(`/account/appointments/${appointmentId}`)}>View appointment</Button>
-          <Button variant="secondary" onClick={() => router.push("/book")}>Start another appointment</Button>
+          <Button variant="secondary" onClick={onBookAnother}>Start another appointment</Button>
         </div>
       </Card>
     );
@@ -513,6 +629,8 @@ function PaymentProofStep({
           <Button className="w-full" loading={submitting} disabled={!proofId} onClick={submitProof}>Submit payment proof for review</Button>
         )}
         <p className="text-xs text-ink-soft">The amount is checked against your booking on the server. A screenshot is required; the browser cannot mark a payment or appointment as paid.</p>
+        <Button variant="secondary" className="w-full" disabled={uploading || submitting || !!proofId} onClick={onBookAnother}>Add another appointment before proof upload</Button>
+        <p className="text-xs text-ink-soft">This request is saved in your pending list. Return to upload its screenshot; it cannot be confirmed without proof and staff approval.</p>
       </div>
     </Card>
   );

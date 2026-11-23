@@ -21,9 +21,9 @@ export default async function BookPage({
       <SiteHeader />
       <main className="container-page py-12 md:py-16">
         <p className="text-xs font-medium uppercase tracking-wide2 text-bronze-500">Booking</p>
-        <h1 className="mt-2 font-display text-3xl text-ink">Book your appointment</h1>
+        <h1 className="mt-2 font-display text-3xl text-ink">Book appointments</h1>
         <p className="mt-2 max-w-lg text-sm text-ink-soft">
-          Prices shown are estimates and may change based on your hair length, condition and chosen style.
+          Prices are estimates and may change based on your hair length, condition and chosen style. You can create multiple separate appointment requests in one visit. Each appointment needs its own MoMo screenshot and remains pending until the salon reviews it.
         </p>
 
         <div className="mt-10">
