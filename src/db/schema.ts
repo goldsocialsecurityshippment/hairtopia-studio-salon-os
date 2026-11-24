@@ -1,4 +1,4 @@
-import { pgTable, text, integer, real, boolean, customType } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, real, boolean, customType, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 const binaryData = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => "bytea" });
@@ -143,6 +143,23 @@ export const appointments = pgTable("appointments", {
   acceptedTermsVersion: integer("accepted_terms_version"),
   acceptedTermsAt: text("accepted_terms_at"),
 });
+
+/** A booking can contain several service lines while remaining one appointment.
+ * Existing appointments keep their legacy serviceId as the primary service;
+ * every service is also represented here with the price/duration/terms agreed
+ * at booking time. */
+export const appointmentServices = pgTable("appointment_services", {
+  id: id(),
+  appointmentId: text("appointment_id").notNull().references(() => appointments.id),
+  serviceId: text("service_id").notNull().references(() => services.id),
+  variationId: text("variation_id").references(() => serviceVariations.id),
+  price: real("price").notNull(),
+  durationMinutes: integer("duration_minutes").notNull(),
+  sortOrder: integer("sort_order").notNull().default(0),
+  acceptedTermsId: text("accepted_terms_id"),
+  acceptedTermsVersion: integer("accepted_terms_version"),
+  acceptedTermsAt: text("accepted_terms_at"),
+}, (table) => [uniqueIndex("appointment_services_appointment_order_unique").on(table.appointmentId, table.sortOrder)]);
 
 export const appointmentStatusHistory = pgTable("appointment_status_history", {
   id: id(),

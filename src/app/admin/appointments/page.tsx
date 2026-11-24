@@ -4,6 +4,7 @@ import { eq, desc } from "drizzle-orm";
 import Link from "next/link";
 import { Badge, statusTone, statusLabel } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { getAppointmentServiceLines } from "@/lib/data/appointment-services";
 
 export default async function AdminAppointmentsPage({
   searchParams,
@@ -19,11 +20,18 @@ export default async function AdminAppointmentsPage({
     .orderBy(desc(appointments.createdAt))
     .limit(200);
 
+  const rowsWithServices = await Promise.all(
+    rows.map(async (row) => ({
+      ...row,
+      serviceName: (await getAppointmentServiceLines(row.appointment)).map((line) => line.serviceName).join(" + ") || row.serviceName,
+    }))
+  );
+
   const stylists = await db.select().from(users).where(eq(users.role, "stylist"));
   const work = await db.select().from(completedWork);
   const allPayments = await db.select().from(payments);
 
-  const filtered = status ? rows.filter((r) => r.appointment.status === status) : rows;
+  const filtered = status ? rowsWithServices.filter((r) => r.appointment.status === status) : rowsWithServices;
 
   const statuses = ["pending", "confirmed", "arrived", "in_service", "completed", "cancelled", "no_show"];
 

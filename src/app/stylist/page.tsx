@@ -5,6 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { StylistAppointmentCard } from "@/components/stylist/StylistAppointmentCard";
 import { AttendanceActions } from "@/components/stylist/AttendanceActions";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { getAppointmentServiceLines } from "@/lib/data/appointment-services";
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -22,12 +23,19 @@ export default async function StylistTodayPage() {
     .innerJoin(services, eq(appointments.serviceId, services.id))
     .where(and(eq(appointments.stylistId, user.id), eq(appointments.scheduledDate, date)));
 
+  const rowsWithServices = await Promise.all(
+    rows.map(async (row) => ({
+      ...row,
+      serviceName: (await getAppointmentServiceLines(row.appointment)).map((line) => line.serviceName).join(" + ") || row.serviceName,
+    }))
+  );
+
   const [attendanceRow] = await db
     .select()
     .from(attendance)
     .where(and(eq(attendance.staffId, user.id), eq(attendance.date, date)));
 
-  const sorted = rows.sort((a, b) => a.appointment.scheduledTime.localeCompare(b.appointment.scheduledTime));
+  const sorted = rowsWithServices.sort((a, b) => a.appointment.scheduledTime.localeCompare(b.appointment.scheduledTime));
   const active = sorted.filter((r) => ["in_service"].includes(r.appointment.status));
   const waiting = sorted.filter((r) => ["arrived", "confirmed", "pending"].includes(r.appointment.status));
   const done = sorted.filter((r) => ["completed", "cancelled", "no_show"].includes(r.appointment.status));

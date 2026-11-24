@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { db } from "@/db";
 import {
-  services, serviceCategories, serviceTerms, stylistServices, availability,
+  services, serviceCategories, serviceTerms, stylistServices, availability, appointmentServices,
   salonSettings, appointments, staffProfiles, notifications,
 } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -159,6 +159,80 @@ describe("Overbooking and overtime genuinely change availability", () => {
     const on = await getAvailableSlots({ stylistId: hairStylist.id, serviceId: hairSvc.id, date: MONDAY });
     expect(on).toContain("16:30");
     await db.update(salonSettings).set({ overtimeAllowedMinutes: 0 }).where(eq(salonSettings.id, "main"));
+  });
+});
+
+describe("Combined multi-service appointments", () => {
+  const COMBINED_MONDAY = "2027-04-05";
+
+  it("books one appointment with summed duration, price and ordered service snapshots", async () => {
+    const openSlots = await getAvailableSlots({
+      stylistId: makeupArtist.id,
+      serviceIds: [softGlam.id, bridal.id],
+      date: COMBINED_MONDAY,
+    });
+    expect(openSlots).toContain("09:00");
+    expect(openSlots).not.toContain("13:30"); // 225 combined minutes would extend past closing.
+
+    const result = await createAppointment({
+      serviceSelections: [
+        { serviceId: softGlam.id },
+        { serviceId: bridal.id, acceptedTermsId: bridalTermsV1.id },
+      ],
+      stylistId: makeupArtist.id,
+      date: COMBINED_MONDAY,
+      time: "09:00",
+      customerName: "Combined Booking Tester",
+      customerPhone: "0209991130",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const [appointment] = await db.select().from(appointments).where(eq(appointments.id, result.appointmentId));
+    const lines = await db.select().from(appointmentServices).where(eq(appointmentServices.appointmentId, result.appointmentId));
+    expect(appointment.durationMinutes).toBe(225);
+    expect(appointment.priceEstimate).toBe(1700);
+    expect(result.priceEstimate).toBe(1700);
+    expect(lines).toHaveLength(2);
+    expect(lines.map((line) => line.serviceId)).toEqual([softGlam.id, bridal.id]);
+    expect(lines[1].acceptedTermsVersion).toBe(1);
+
+    const updatedSlots = await getAvailableSlots({
+      stylistId: makeupArtist.id,
+      serviceIds: [softGlam.id, bridal.id],
+      date: COMBINED_MONDAY,
+    });
+    expect(updatedSlots).not.toContain("09:00");
+  });
+
+  it("rejects a combined booking if the chosen stylist is ineligible for any selected service", async () => {
+    const result = await createAppointment({
+      serviceSelections: [
+        { serviceId: bridal.id, acceptedTermsId: bridalTermsV1.id },
+        { serviceId: hairSvc.id },
+      ],
+      stylistId: hairStylist.id,
+      date: "2027-04-12",
+      time: "09:00",
+      customerName: "Ineligible Combined Tester",
+      customerPhone: "0209991131",
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("requires current terms acceptance for every selected service that has published terms", async () => {
+    const result = await createAppointment({
+      serviceSelections: [
+        { serviceId: softGlam.id },
+        { serviceId: bridal.id },
+      ],
+      stylistId: makeupArtist.id,
+      date: "2027-04-12",
+      time: "09:00",
+      customerName: "Terms Combined Tester",
+      customerPhone: "0209991132",
+    });
+    expect(result.ok).toBe(false);
   });
 });
 

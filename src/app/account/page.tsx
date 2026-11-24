@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Button } from "@/components/ui/Button";
 import { PushToggle } from "@/components/PushToggle";
 import { NotificationPreferences } from "@/components/NotificationPreferences";
+import { getAppointmentServiceLines } from "@/lib/data/appointment-services";
 
 export default async function AccountPage() {
   const user = await getCurrentUser();
@@ -26,15 +27,22 @@ export default async function AccountPage() {
     .where(eq(appointments.customerId, user.id))
     .orderBy(desc(appointments.createdAt));
 
-  const stylistIds = Array.from(new Set(myAppointments.map((a) => a.appointment.stylistId).filter(Boolean))) as string[];
+  const appointmentsWithServices = await Promise.all(
+    myAppointments.map(async (row) => ({
+      ...row,
+      serviceName: (await getAppointmentServiceLines(row.appointment)).map((line) => line.serviceName).join(" + ") || row.serviceName,
+    }))
+  );
+
+  const stylistIds = Array.from(new Set(appointmentsWithServices.map((a) => a.appointment.stylistId).filter(Boolean))) as string[];
   const stylists = stylistIds.length
     ? await db.select().from(users).where(eq(users.role, "stylist"))
     : [];
 
-  const upcoming = myAppointments.filter((a) =>
+  const upcoming = appointmentsWithServices.filter((a) =>
     ["pending", "confirmed", "arrived", "in_service"].includes(a.appointment.status)
   );
-  const past = myAppointments.filter((a) =>
+  const past = appointmentsWithServices.filter((a) =>
     ["completed", "cancelled", "no_show"].includes(a.appointment.status)
   );
 

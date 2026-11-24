@@ -211,9 +211,11 @@ export async function listPendingMobileMoneyProofs() {
     submittedAt: paymentProofs.submittedAt,
     customerName: appointments.customerName,
     customerPhone: appointments.customerPhone,
+    stylistName: users.name,
     scheduledDate: appointments.scheduledDate,
     scheduledTime: appointments.scheduledTime,
     appointmentStatus: appointments.status,
   }).from(paymentProofs).innerJoin(appointments, eq(paymentProofs.appointmentId, appointments.id))
+    .leftJoin(users, eq(appointments.stylistId, users.id))
     .where(eq(paymentProofs.status, "pending"));
 }

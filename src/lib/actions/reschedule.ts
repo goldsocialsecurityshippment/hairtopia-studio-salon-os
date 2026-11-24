@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { appointments, rescheduleRequests, salonSettings, appointmentStatusHistory } from "@/db/schema";
+import { appointments, appointmentServices, rescheduleRequests, salonSettings, appointmentStatusHistory } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { getSession, requireRole } from "@/lib/auth/session";
 import { recordAudit } from "@/lib/audit";
@@ -24,6 +24,14 @@ async function hoursUntil(appointmentId: string) {
   if (!appt) return { appt: null, hours: 0 };
   const dt = new Date(`${appt.scheduledDate}T${appt.scheduledTime}:00`);
   return { appt, hours: (dt.getTime() - Date.now()) / (1000 * 60 * 60) };
+}
+
+async function serviceIdsForAppointment(appointmentId: string, fallbackServiceId: string) {
+  const lines = await db
+    .select({ serviceId: appointmentServices.serviceId })
+    .from(appointmentServices)
+    .where(eq(appointmentServices.appointmentId, appointmentId));
+  return lines.length ? lines.map((line) => line.serviceId) : [fallbackServiceId];
 }
 
 /**
@@ -61,13 +69,15 @@ export async function requestReschedule(input: z.infer<typeof requestSchema>) {
 
   const targetStylistId = data.requestedStylistId || appt.stylistId;
   if (!targetStylistId) return { ok: false as const, error: "No professional assigned to check availability against." };
-  if (!(await isStylistEligible(targetStylistId, appt.serviceId))) {
+  const serviceIds = await serviceIdsForAppointment(appt.id, appt.serviceId);
+  const eligible = await Promise.all(serviceIds.map((serviceId) => isStylistEligible(targetStylistId, serviceId)));
+  if (eligible.some((isEligible) => !isEligible)) {
     return { ok: false as const, error: INELIGIBLE_STYLIST_ERROR };
   }
 
   const slots = await getAvailableSlots({
     stylistId: targetStylistId,
-    serviceId: appt.serviceId,
+    serviceIds,
     date: data.requestedDate,
     excludeAppointmentId: appt.id,
   });
@@ -171,12 +181,14 @@ export async function resolveRescheduleRequest(params: {
   }
 
   const targetStylistId = request.requestedStylistId || appt.stylistId!;
-  if (!(await isStylistEligible(targetStylistId, appt.serviceId))) {
+  const serviceIds = await serviceIdsForAppointment(appt.id, appt.serviceId);
+  const eligible = await Promise.all(serviceIds.map((serviceId) => isStylistEligible(targetStylistId, serviceId)));
+  if (eligible.some((isEligible) => !isEligible)) {
     return { ok: false as const, error: INELIGIBLE_STYLIST_ERROR };
   }
   const slots = await getAvailableSlots({
     stylistId: targetStylistId,
-    serviceId: appt.serviceId,
+    serviceIds,
     date: request.requestedDate,
     excludeAppointmentId: appt.id,
   });

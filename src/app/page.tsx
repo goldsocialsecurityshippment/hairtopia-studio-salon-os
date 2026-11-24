@@ -23,7 +23,7 @@ export default async function HomePage() {
     <>
       <SiteHeader />
       <main>
-        {/* HERO — desktop: peach split, badge bottom-right of the photo */}
+        {/* HERO — desktop: peach split, compact badge top-right of the photo */}
         <section className="relative hidden border-b border-line md:block" style={{ backgroundColor: "#EABD9D" }}>
           <div className="grid md:grid-cols-2 md:items-center">
             <div className="px-8 py-24 md:pl-10 lg:pl-16">
@@ -66,7 +66,7 @@ export default async function HomePage() {
                 className="object-cover object-center contrast-[1.12] saturate-[1.08]"
                 priority
               />
-              <div className="absolute right-8 top-8 h-44 w-44 overflow-hidden rounded-full border-4 border-white bg-white shadow-soft lg:h-52 lg:w-52">
+              <div className="absolute right-8 top-8 h-28 w-28 overflow-hidden rounded-full border-4 border-white bg-white shadow-soft lg:h-32 lg:w-32">
                 <Image
                   src="/brand/hairtopia-logo.jpg"
                   alt="Hairtopia Studio"

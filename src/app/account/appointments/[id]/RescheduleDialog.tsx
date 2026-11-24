@@ -10,11 +10,11 @@ import { Input, Textarea } from "@/components/ui/Input";
 export function RescheduleDialog({
   appointmentId,
   stylistId,
-  serviceId,
+  serviceIds,
 }: {
   appointmentId: string;
   stylistId: string;
-  serviceId: string;
+  serviceIds: string[];
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -34,10 +34,10 @@ export function RescheduleDialog({
     }
     setLoadingSlots(true);
     setTime("");
-    getAvailableSlots({ stylistId, serviceId, date, excludeAppointmentId: appointmentId })
+    getAvailableSlots({ stylistId, serviceIds, date, excludeAppointmentId: appointmentId })
       .then(setSlots)
       .finally(() => setLoadingSlots(false));
-  }, [date, stylistId, serviceId, appointmentId]);
+  }, [date, stylistId, serviceIds, appointmentId]);
 
   async function handleSubmit() {
     setPending(true);

@@ -2,10 +2,16 @@
 import { users } from "@/db/schema";
 import { eq, or } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { getSession } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const session = await getSession();
+  if (!session || !["manager", "owner", "admin"].includes(session.role)) {
+    return NextResponse.json({ error: "Not found." }, { status: 404 });
+  }
+
   try {
     const identifier = "nikinuel@gmail.com";
 

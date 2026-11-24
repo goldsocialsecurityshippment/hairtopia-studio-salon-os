@@ -2,10 +2,11 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { getCurrentUser } from "@/lib/actions/auth";
 import { db } from "@/db";
-import { appointments, services, serviceVariations, customerReferences, completedWork } from "@/db/schema";
+import { appointments, customerReferences, completedWork } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { Badge, statusTone, statusLabel } from "@/components/ui/Badge";
 import { StylistAppointmentCard } from "@/components/stylist/StylistAppointmentCard";
+import { getAppointmentServiceLines } from "@/lib/data/appointment-services";
 
 export default async function StylistAppointmentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -16,10 +17,7 @@ export default async function StylistAppointmentDetailPage({ params }: { params:
   if (!appointment) notFound();
   if (user.role === "stylist" && appointment.stylistId !== user.id) notFound();
 
-  const [service] = await db.select().from(services).where(eq(services.id, appointment.serviceId));
-  const variation = appointment.variationId
-    ? (await db.select().from(serviceVariations).where(eq(serviceVariations.id, appointment.variationId)))[0]
-    : null;
+  const serviceLines = await getAppointmentServiceLines(appointment);
   const references = await db.select().from(customerReferences).where(eq(customerReferences.appointmentId, id));
   const work = await db.select().from(completedWork).where(eq(completedWork.appointmentId, id));
 
@@ -33,14 +31,25 @@ export default async function StylistAppointmentDetailPage({ params }: { params:
         <div>
           <h1 className="font-display text-xl text-ink">{appointment.customerName}</h1>
           <p className="text-sm text-ink-soft">
-            {appointment.customerPhone} · {service?.name}
-            {variation ? ` — ${variation.label}` : ""}
+            {appointment.customerPhone} · {serviceLines.map((line) => line.serviceName).join(" + ")}
           </p>
         </div>
         <Badge tone={statusTone(appointment.status)}>{statusLabel(appointment.status)}</Badge>
       </div>
 
       <p className="mt-2 text-sm text-ink-soft">{appointment.scheduledDate} at {appointment.scheduledTime}</p>
+
+      <div className="mt-4 rounded-card border border-line bg-surface p-4">
+        <p className="text-xs uppercase tracking-wide2 text-ink-soft">Services in this appointment</p>
+        <ul className="mt-2 space-y-2">
+          {serviceLines.map((line) => (
+            <li key={line.id} className="flex justify-between gap-4 text-sm">
+              <span className="text-ink">{line.serviceName}{line.variationLabel ? ` — ${line.variationLabel}` : ""}</span>
+              <span className="shrink-0 text-ink-soft">GH₵{line.price} · {line.durationMinutes} min</span>
+            </li>
+          ))}
+        </ul>
+      </div>
 
       {appointment.instructions && (
         <div className="mt-4 rounded-card border border-line bg-bronze-50 p-4">
@@ -89,7 +98,7 @@ export default async function StylistAppointmentDetailPage({ params }: { params:
             scheduledTime: appointment.scheduledTime,
             status: appointment.status,
             instructions: null,
-            serviceName: service?.name ?? "",
+            serviceName: serviceLines.map((line) => line.serviceName).join(" + "),
             customerArrivedAt: appointment.customerArrivedAt,
             priceEstimate: appointment.priceEstimate,
             paymentStatus: appointment.paymentStatus,

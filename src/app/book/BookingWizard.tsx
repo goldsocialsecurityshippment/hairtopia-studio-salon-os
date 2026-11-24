@@ -53,8 +53,8 @@ export function BookingWizard({
 }) {
   const [step, setStep] = useState(0);
 
-  const [serviceId, setServiceId] = useState<string | null>(null);
-  const [variationId, setVariationId] = useState<string | null>(null);
+  const [serviceIds, setServiceIds] = useState<string[]>([]);
+  const [variationIds, setVariationIds] = useState<Record<string, string | null>>({});
   const [stylistId, setStylistId] = useState<string | null>(preselectedStylistId ?? null);
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
@@ -72,11 +72,14 @@ export function BookingWizard({
   const [pendingProofBookings, setPendingProofBookings] = useState<PendingProofBooking[]>([]);
   const [proofQueueLoaded, setProofQueueLoaded] = useState(false);
   const [activeProofBookingId, setActiveProofBookingId] = useState<string | null>(null);
-  const [activeTerms, setActiveTerms] = useState<{ id: string; title: string; content: string; version: number } | null>(null);
-  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [termsByServiceId, setTermsByServiceId] = useState<Record<string, { id: string; title: string; content: string; version: number } | null>>({});
+  const [acceptedTermsByServiceId, setAcceptedTermsByServiceId] = useState<Record<string, boolean>>({});
+  const [termsLoading, setTermsLoading] = useState(false);
 
   const allServices = useMemo(() => categories.flatMap((c) => c.services), [categories]);
-  const selectedService = allServices.find((s) => s.id === serviceId) ?? null;
+  const selectedServices = serviceIds
+    .map((id) => allServices.find((service) => service.id === id))
+    .filter((service): service is ServiceLite => !!service);
 
   useEffect(() => {
     try {
@@ -98,27 +101,65 @@ export function BookingWizard({
   }, [pendingProofBookings, proofQueueLoaded]);
 
   useEffect(() => {
-    setTermsAccepted(false);
-    if (!serviceId) {
-      setActiveTerms(null);
-      return;
+    let cancelled = false;
+    setAcceptedTermsByServiceId({});
+    if (serviceIds.length === 0) {
+      setTermsByServiceId({});
+      setTermsLoading(false);
+      return () => { cancelled = true; };
     }
-    getActiveServiceTerms(serviceId).then((terms) => setActiveTerms(terms));
-  }, [serviceId]);
-  const selectedVariation = selectedService?.variations.find((v) => v.id === variationId) ?? null;
-  const eligibleStylists = stylists.filter((s) => serviceId && s.serviceIds.includes(serviceId));
+    setTermsLoading(true);
+    Promise.all(serviceIds.map(async (id) => [id, await getActiveServiceTerms(id)] as const))
+      .then((entries) => {
+        if (!cancelled) setTermsByServiceId(Object.fromEntries(entries));
+      })
+      .finally(() => {
+        if (!cancelled) setTermsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [serviceIds]);
+  const selectedVariations = Object.fromEntries(
+    selectedServices.map((service) => [service.id, service.variations.find((variation) => variation.id === variationIds[service.id]) ?? null])
+  );
+  const eligibleStylists = stylists.filter((stylist) =>
+    serviceIds.length > 0 && serviceIds.every((id) => stylist.serviceIds.includes(id))
+  );
   const selectedStylist = stylists.find((s) => s.id === stylistId) ?? null;
-  const price = selectedVariation?.price ?? selectedService?.priceMin ?? 0;
+  const price = selectedServices.reduce((total, service) => total + (selectedVariations[service.id]?.price ?? service.priceMin), 0);
+  const durationMinutes = selectedServices.reduce((total, service) => total + service.durationMinutes, 0);
 
   const minDate = new Date().toISOString().slice(0, 10);
 
+  function selectService(service: ServiceLite, checked: boolean) {
+    const nextServiceIds = checked
+      ? [...serviceIds, service.id]
+      : serviceIds.filter((id) => id !== service.id);
+    if (checked && nextServiceIds.length > 10) {
+      setError("You can combine up to ten services in one appointment.");
+      return;
+    }
+    setError(null);
+    setServiceIds(nextServiceIds);
+    setVariationIds((current) => ({
+      ...current,
+      [service.id]: checked ? (service.variations.find((variation) => variation.isDefault)?.id ?? null) : null,
+    }));
+    const preselectedStylist = stylists.find((stylist) => stylist.id === preselectedStylistId);
+    setStylistId(preselectedStylist && nextServiceIds.every((id) => preselectedStylist.serviceIds.includes(id))
+      ? preselectedStylistId ?? null
+      : null);
+    setDate("");
+    setTime("");
+    setSlots([]);
+  }
+
   async function loadSlots(newStylistId: string, newDate: string) {
-    if (!serviceId || !newStylistId || !newDate) return;
+    if (serviceIds.length === 0 || !newStylistId || !newDate) return;
     setLoadingSlots(true);
     setSlots([]);
     setTime("");
     try {
-      const result = await getAvailableSlots({ stylistId: newStylistId, serviceId, date: newDate });
+      const result = await getAvailableSlots({ stylistId: newStylistId, serviceIds, date: newDate });
       setSlots(result);
     } finally {
       setLoadingSlots(false);
@@ -127,8 +168,8 @@ export function BookingWizard({
 
   function startAnotherBooking() {
     setStep(0);
-    setServiceId(null);
-    setVariationId(null);
+    setServiceIds([]);
+    setVariationIds({});
     setStylistId(preselectedStylistId ?? null);
     setDate("");
     setTime("");
@@ -136,8 +177,9 @@ export function BookingWizard({
     setInstructions("");
     setReferenceUrls([]);
     setError(null);
-    setActiveTerms(null);
-    setTermsAccepted(false);
+    setTermsByServiceId({});
+    setAcceptedTermsByServiceId({});
+    setTermsLoading(false);
     setActiveProofBookingId(null);
   }
 
@@ -149,7 +191,7 @@ export function BookingWizard({
       for (const file of Array.from(files)) {
         const formData = new FormData();
         formData.append("file", file);
-        const res = await fetch("/api/upload", { method: "POST", body: formData });
+        const res = await fetch("/api/upload?purpose=booking-reference", { method: "POST", body: formData });
         const data = await res.json();
         if (!res.ok) {
           setError(data.error || "Upload failed. Please try again.");
@@ -163,11 +205,11 @@ export function BookingWizard({
   }
 
   function canProceed(): boolean {
-    if (step === 0) return !!serviceId && (selectedService!.variations.length === 0 || !!variationId);
+    if (step === 0) return selectedServices.length > 0 && !termsLoading && serviceIds.every((id) => id in termsByServiceId) && selectedServices.every((service) => service.variations.length === 0 || !!variationIds[service.id]);
     if (step === 1) return !!stylistId;
     if (step === 2) return !!date && !!time;
     if (step === 3) return customerName.trim().length > 1 && customerPhone.trim().length > 8;
-    if (step === 4) return !activeTerms || termsAccepted;
+    if (step === 4) return selectedServices.every((service) => !termsByServiceId[service.id] || acceptedTermsByServiceId[service.id]);
     return true;
   }
 
@@ -175,8 +217,13 @@ export function BookingWizard({
     setSubmitting(true);
     setError(null);
     const result = await createAppointment({
-      serviceId: serviceId!,
-      variationId: variationId ?? undefined,
+      serviceSelections: selectedServices.map((service) => ({
+        serviceId: service.id,
+        variationId: variationIds[service.id] ?? undefined,
+        acceptedTermsId: termsByServiceId[service.id] && acceptedTermsByServiceId[service.id]
+          ? termsByServiceId[service.id]!.id
+          : undefined,
+      })),
       stylistId: stylistId!,
       date,
       time,
@@ -184,7 +231,6 @@ export function BookingWizard({
       customerPhone,
       instructions: instructions || undefined,
       referenceUrls,
-      acceptedTermsId: activeTerms?.id,
     });
     setSubmitting(false);
     if (!result.ok) {
@@ -193,7 +239,7 @@ export function BookingWizard({
     }
     const booking: PendingProofBooking = {
       appointmentId: result.appointmentId,
-      serviceName: selectedService?.name ?? "Appointment",
+      serviceName: selectedServices.map((service) => service.name).join(" + ") || "Appointment",
       stylistName: selectedStylist?.name ?? "Stylist",
       date,
       time,
@@ -263,48 +309,57 @@ export function BookingWizard({
               <h3 className="font-display text-lg text-ink">{cat.name}</h3>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 {cat.services.map((s) => (
-                  <button
+                  <label
                     key={s.id}
-                    type="button"
-                    onClick={() => {
-                      setServiceId(s.id);
-                      setVariationId(s.variations.find((v) => v.isDefault)?.id ?? null);
-                      setStylistId(null);
-                    }}
                     className={`rounded-card border p-4 text-left transition-colors ${
-                      serviceId === s.id ? "border-bronze-400 bg-bronze-50" : "border-line bg-surface hover:border-ink/30"
+                      serviceIds.includes(s.id) ? "border-bronze-400 bg-bronze-50" : "border-line bg-surface hover:border-ink/30"
                     }`}
                   >
-                    <p className="text-sm font-medium text-ink">{s.name}</p>
-                    <p className="mt-1 text-xs text-ink-soft">
-                      GH₵{s.priceMin}
-                      {s.priceMax ? `–${s.priceMax}` : "+"} · {s.durationMinutes} min
-                    </p>
-                  </button>
+                    <span className="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        checked={serviceIds.includes(s.id)}
+                        onChange={(event) => selectService(s, event.target.checked)}
+                        className="mt-0.5"
+                      />
+                      <span>
+                        <span className="block text-sm font-medium text-ink">{s.name}</span>
+                        <span className="mt-1 block text-xs text-ink-soft">
+                          GH₵{s.priceMin}
+                          {s.priceMax ? `–${s.priceMax}` : "+"} · {s.durationMinutes} min
+                        </span>
+                      </span>
+                    </span>
+                  </label>
                 ))}
               </div>
             </div>
           ))}
 
-          {selectedService && selectedService.variations.length > 0 && (
-            <div>
-              <h3 className="font-display text-lg text-ink">Choose your option</h3>
+          {selectedServices.filter((service) => service.variations.length > 0).map((service) => (
+            <div key={service.id}>
+              <h3 className="font-display text-lg text-ink">Choose an option for {service.name}</h3>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                {selectedService.variations.map((v) => (
+                {service.variations.map((variation) => (
                   <button
-                    key={v.id}
+                    key={variation.id}
                     type="button"
-                    onClick={() => setVariationId(v.id)}
+                    onClick={() => setVariationIds((current) => ({ ...current, [service.id]: variation.id }))}
                     className={`rounded-card border p-4 text-left transition-colors ${
-                      variationId === v.id ? "border-bronze-400 bg-bronze-50" : "border-line bg-surface hover:border-ink/30"
+                      variationIds[service.id] === variation.id ? "border-bronze-400 bg-bronze-50" : "border-line bg-surface hover:border-ink/30"
                     }`}
                   >
-                    <p className="text-sm font-medium text-ink">{v.label}</p>
-                    <p className="mt-1 text-xs text-ink-soft">GH₵{v.price}</p>
+                    <p className="text-sm font-medium text-ink">{variation.label}</p>
+                    <p className="mt-1 text-xs text-ink-soft">GH₵{variation.price}</p>
                   </button>
                 ))}
               </div>
             </div>
+          ))}
+          {selectedServices.length > 0 && (
+            <p className="text-sm text-ink-soft">
+              {selectedServices.length} service(s) selected · estimated total GH₵{price} · {durationMinutes} minutes in one appointment.
+            </p>
           )}
         </div>
       )}
@@ -313,7 +368,7 @@ export function BookingWizard({
       {step === 1 && (
         <div>
           {eligibleStylists.length === 0 ? (
-            <p className="text-sm text-ink-soft">No stylists are currently assigned to this service. Please choose another service.</p>
+            <p className="text-sm text-ink-soft">No stylist is currently assigned to every selected service. Please change your service selection.</p>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
               {eligibleStylists.map((s) => (
@@ -413,16 +468,23 @@ export function BookingWizard({
 
       {/* STEP 4: Review */}
       {step === 4 && (
-        <Card className="max-w-md p-6">
+        <Card className="max-w-xl p-6">
           <dl className="space-y-3 text-sm">
-            <div className="flex justify-between"><dt className="text-ink-soft">Service</dt><dd className="text-ink">{selectedService?.name}</dd></div>
-            {selectedVariation && (
-              <div className="flex justify-between"><dt className="text-ink-soft">Option</dt><dd className="text-ink">{selectedVariation.label}</dd></div>
-            )}
+            <div>
+              <dt className="text-ink-soft">Services in this appointment</dt>
+              <dd className="mt-2 space-y-2 text-ink">
+                {selectedServices.map((service) => (
+                  <div key={service.id} className="flex justify-between gap-4 border-b border-line pb-2 last:border-0">
+                    <span>{service.name}{selectedVariations[service.id] ? ` — ${selectedVariations[service.id]?.label}` : ""}</span>
+                    <span className="shrink-0">GH₵{selectedVariations[service.id]?.price ?? service.priceMin} · {service.durationMinutes} min</span>
+                  </div>
+                ))}
+              </dd>
+            </div>
             <div className="flex justify-between"><dt className="text-ink-soft">Stylist</dt><dd className="text-ink">{selectedStylist?.name}</dd></div>
             <div className="flex justify-between"><dt className="text-ink-soft">Date</dt><dd className="text-ink">{date}</dd></div>
             <div className="flex justify-between"><dt className="text-ink-soft">Time</dt><dd className="text-ink">{time}</dd></div>
-            <div className="flex justify-between"><dt className="text-ink-soft">Estimated price</dt><dd className="text-ink">GH₵{price}</dd></div>
+            <div className="flex justify-between"><dt className="text-ink-soft">Combined appointment</dt><dd className="text-ink">{durationMinutes} min · GH₵{price} estimated</dd></div>
             <div className="flex justify-between"><dt className="text-ink-soft">Name</dt><dd className="text-ink">{customerName}</dd></div>
             <div className="flex justify-between"><dt className="text-ink-soft">Phone</dt><dd className="text-ink">{customerPhone}</dd></div>
           </dl>
@@ -430,23 +492,26 @@ export function BookingWizard({
             This is a price estimate and may change based on style and preference.
           </p>
 
-          {activeTerms && (
-            <div className="mt-4 border-t border-line pt-4">
-              <p className="text-sm font-medium text-ink">{activeTerms.title}</p>
-              <div className="mt-2 max-h-40 overflow-y-auto rounded-sm border border-line bg-bronze-50/40 p-3 text-xs text-ink-soft whitespace-pre-line">
-                {activeTerms.content}
+          {selectedServices.filter((service) => termsByServiceId[service.id]).map((service) => {
+            const terms = termsByServiceId[service.id]!;
+            return (
+              <div key={service.id} className="mt-4 border-t border-line pt-4">
+                <p className="text-sm font-medium text-ink">{terms.title} — {service.name}</p>
+                <div className="mt-2 max-h-40 overflow-y-auto rounded-sm border border-line bg-bronze-50/40 p-3 text-xs text-ink-soft whitespace-pre-line">
+                  {terms.content}
+                </div>
+                <label className="mt-3 flex items-start gap-2 text-xs text-ink">
+                  <input
+                    type="checkbox"
+                    checked={!!acceptedTermsByServiceId[service.id]}
+                    onChange={(event) => setAcceptedTermsByServiceId((current) => ({ ...current, [service.id]: event.target.checked }))}
+                    className="mt-0.5"
+                  />
+                  I have read and accept the Terms &amp; Conditions for {service.name}.
+                </label>
               </div>
-              <label className="mt-3 flex items-start gap-2 text-xs text-ink">
-                <input
-                  type="checkbox"
-                  checked={termsAccepted}
-                  onChange={(e) => setTermsAccepted(e.target.checked)}
-                  className="mt-0.5"
-                />
-                I have read and accept the Terms &amp; Conditions above.
-              </label>
-            </div>
-          )}
+            );
+          })}
         </Card>
       )}
 
@@ -484,7 +549,7 @@ function PendingProofBookingList({
   return (
     <Card className="mx-auto mb-6 max-w-lg p-5">
       <h2 className="font-display text-lg text-ink">Your appointment requests</h2>
-      <p className="mt-1 text-xs text-ink-soft">Each is a separate booking and needs its own screenshot. A booking stays pending until its payment is reviewed.</p>
+      <p className="mt-1 text-xs text-ink-soft">Each request is one appointment, which may include several services, and needs one screenshot for its payment. It stays pending until the salon reviews it.</p>
       <ul className="mt-4 space-y-3">
         {bookings.map((booking) => (
           <li key={booking.appointmentId} className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3">

@@ -12,6 +12,7 @@ type Proof = {
   submittedAt: string | null;
   customerName: string;
   customerPhone: string;
+  stylistName: string | null;
   scheduledDate: string;
   scheduledTime: string;
   appointmentStatus: string;
@@ -51,7 +52,7 @@ export function PaymentProofReviewQueue({ proofs: initialProofs }: { proofs: Pro
           <div className="flex flex-col">
             <div>
               <h2 className="font-display text-xl text-ink">{proof.customerName}</h2>
-              <p className="mt-1 text-sm text-ink-soft">{proof.customerPhone} · {proof.scheduledDate} at {proof.scheduledTime}</p>
+              <p className="mt-1 text-sm text-ink-soft">{proof.customerPhone} · Stylist: {proof.stylistName ?? "Unassigned"} · {proof.scheduledDate} at {proof.scheduledTime}</p>
               <dl className="mt-4 space-y-2 text-sm">
                 <div className="flex justify-between gap-3"><dt className="text-ink-soft">Submitted amount</dt><dd className="font-medium text-ink">GH₵{proof.amount.toFixed(2)} ({proof.amountType})</dd></div>
                 <div className="flex justify-between gap-3"><dt className="text-ink-soft">Appointment</dt><dd className="text-ink">{proof.appointmentStatus}</dd></div>

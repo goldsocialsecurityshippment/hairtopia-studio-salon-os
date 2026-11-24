@@ -1,6 +1,6 @@
 import { db } from "@/db";
-import { appointments, payments, users, reviews, attendance, services, consultations } from "@/db/schema";
-import { eq, gte, avg, count } from "drizzle-orm";
+import { appointments, appointmentServices, payments, users, reviews, attendance, services, consultations } from "@/db/schema";
+import { eq, gte, avg, count, inArray } from "drizzle-orm";
 import { Card } from "@/components/ui/Card";
 
 function daysAgo(n: number) {
@@ -80,9 +80,16 @@ export default async function AdminReportsPage({
   const consultationsDeclined = periodConsultations.filter((c) => c.status === "declined").length;
   const consultationsConverted = periodConsultations.filter((c) => c.status === "converted").length;
 
+  const periodAppointmentIds = periodAppointments.map((item) => item.appointment.id);
+  const serviceLines = periodAppointmentIds.length
+    ? await db.select({ appointmentId: appointmentServices.appointmentId, serviceName: services.name })
+      .from(appointmentServices)
+      .innerJoin(services, eq(appointmentServices.serviceId, services.id))
+      .where(inArray(appointmentServices.appointmentId, periodAppointmentIds))
+    : [];
   const serviceCounts = new Map<string, number>();
-  periodAppointments.forEach((a) => {
-    serviceCounts.set(a.serviceName, (serviceCounts.get(a.serviceName) ?? 0) + 1);
+  serviceLines.forEach((line) => {
+    serviceCounts.set(line.serviceName, (serviceCounts.get(line.serviceName) ?? 0) + 1);
   });
   const popularServices = Array.from(serviceCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 5);
 

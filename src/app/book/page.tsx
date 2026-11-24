@@ -23,7 +23,7 @@ export default async function BookPage({
         <p className="text-xs font-medium uppercase tracking-wide2 text-bronze-500">Booking</p>
         <h1 className="mt-2 font-display text-3xl text-ink">Book appointments</h1>
         <p className="mt-2 max-w-lg text-sm text-ink-soft">
-          Prices are estimates and may change based on your hair length, condition and chosen style. You can create multiple separate appointment requests in one visit. Each appointment needs its own MoMo screenshot and remains pending until the salon reviews it.
+          Select one or more services for a single combined appointment. Prices are estimates and may change based on your hair length, condition and chosen style. One Mobile Money screenshot is required for the combined payment, and your request stays pending until the salon reviews it.
         </p>
 
         <div className="mt-10">

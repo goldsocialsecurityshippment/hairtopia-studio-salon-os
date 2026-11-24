@@ -3,6 +3,7 @@
 import { db } from "@/db";
 import {
   appointments,
+  appointmentServices,
   appointmentStatusHistory,
   services,
   serviceVariations,
@@ -19,6 +20,7 @@ import { notify } from "@/lib/notify";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { findOrCreateClient } from "@/lib/crm";
+import { getAppointmentServiceLines } from "@/lib/data/appointment-services";
 import { isStylistEligible, INELIGIBLE_STYLIST_ERROR } from "@/lib/eligibility";
 import { computeDeposit } from "@/lib/payments/provider";
 
@@ -40,7 +42,8 @@ function minutesToTime(mins: number): string {
  * the stylist's weekly schedule, existing appointments, service duration and buffer. */
 export async function getAvailableSlots(params: {
   stylistId: string;
-  serviceId: string;
+  serviceId?: string;
+  serviceIds?: string[];
   date: string; // YYYY-MM-DD
   excludeAppointmentId?: string; // when re-checking a slot for a reschedule, ignore the appointment being moved
 }) {
@@ -50,8 +53,12 @@ export async function getAvailableSlots(params: {
   if (!rl.allowed) return [];
 
   const [settings] = await db.select().from(salonSettings).where(eq(salonSettings.id, "main"));
-  const [service] = await db.select().from(services).where(eq(services.id, params.serviceId));
-  if (!service) return [];
+  const serviceIds = Array.from(new Set(params.serviceIds ?? (params.serviceId ? [params.serviceId] : [])));
+  if (serviceIds.length === 0) return [];
+  const selectedServices = await db.select().from(services).where(inArray(services.id, serviceIds));
+  if (selectedServices.length !== serviceIds.length || selectedServices.some((service) => !service.active)) return [];
+  const eligible = await Promise.all(serviceIds.map((serviceId) => isStylistEligible(params.stylistId, serviceId)));
+  if (eligible.some((isEligible) => !isEligible)) return [];
 
   const dayOfWeek = new Date(params.date + "T00:00:00").getDay();
   const [dayAvailability] = await db
@@ -80,8 +87,8 @@ export async function getAvailableSlots(params: {
     )
     .then((rows) => rows.filter((a) => a.id !== params.excludeAppointmentId));
 
-  const duration = service.durationMinutes;
-  const buffer = service.bufferMinutes ?? settings?.bookingBufferMinutes ?? 15;
+  const duration = selectedServices.reduce((total, service) => total + service.durationMinutes, 0);
+  const buffer = Math.max(...selectedServices.map((service) => service.bufferMinutes ?? settings?.bookingBufferMinutes ?? 15));
   const slotStep = 30;
 
   const startMin = timeToMinutes(openTime);
@@ -121,8 +128,16 @@ export async function getAvailableSlots(params: {
   return slots;
 }
 
-const bookingSchema = z.object({
+const serviceSelectionSchema = z.object({
   serviceId: z.string().min(1),
+  variationId: z.string().optional(),
+  acceptedTermsId: z.string().optional(),
+});
+
+const bookingSchema = z.object({
+  serviceSelections: z.array(serviceSelectionSchema).max(10).optional(),
+  // Keep the original API for existing single-service callers.
+  serviceId: z.string().min(1).optional(),
   variationId: z.string().optional(),
   stylistId: z.string().min(1),
   date: z.string().min(1, "Please choose a date."),
@@ -132,6 +147,18 @@ const bookingSchema = z.object({
   instructions: z.string().optional(),
   referenceUrls: z.array(z.string()).optional(),
   acceptedTermsId: z.string().optional(),
+}).superRefine((data, ctx) => {
+  const selections = data.serviceSelections?.length
+    ? data.serviceSelections
+    : data.serviceId
+      ? [{ serviceId: data.serviceId, variationId: data.variationId, acceptedTermsId: data.acceptedTermsId }]
+      : [];
+  if (selections.length === 0) {
+    ctx.addIssue({ code: "custom", message: "Please choose at least one service." });
+  }
+  if (new Set(selections.map((selection) => selection.serviceId)).size !== selections.length) {
+    ctx.addIssue({ code: "custom", message: "Choose each service only once." });
+  }
 });
 
 export type BookingResult =
@@ -151,40 +178,66 @@ export async function createAppointment(input: z.infer<typeof bookingSchema>): P
     return { ok: false, error: parsed.error.issues[0].message };
   }
   const data = parsed.data;
-
-  const [service] = await db.select().from(services).where(eq(services.id, data.serviceId));
-  if (!service || !service.active) {
-    return { ok: false, error: "This service is no longer available." };
+  const selections = data.serviceSelections?.length
+    ? data.serviceSelections
+    : data.serviceId
+      ? [{ serviceId: data.serviceId, variationId: data.variationId, acceptedTermsId: data.acceptedTermsId }]
+      : [];
+  if (selections.length === 0 || selections.length > 10) {
+    return { ok: false, error: "Choose between one and ten services." };
   }
-
-  // Server-side terms enforcement: never trust a client-side checkbox alone.
-  // If this service has published terms, the exact accepted version ID must
-  // be supplied and must match the CURRENTLY active version.
+  if (new Set(selections.map((selection) => selection.serviceId)).size !== selections.length) {
+    return { ok: false, error: "Choose each service only once." };
+  }
+  const serviceIds = selections.map((selection) => selection.serviceId);
+  const servicesById = await db.select().from(services).where(inArray(services.id, serviceIds));
+  const orderedServices = serviceIds.map((serviceId) => servicesById.find((service) => service.id === serviceId));
+  if (orderedServices.some((service) => !service || !service.active)) {
+    return { ok: false, error: "One or more selected services are no longer available." };
+  }
+  const selectedServices = orderedServices as (typeof servicesById)[number][];
+  const variations = await db.select().from(serviceVariations).where(inArray(serviceVariations.serviceId, serviceIds));
   const { getActiveServiceTerms } = await import("@/lib/actions/service-terms");
-  const activeTerms = await getActiveServiceTerms(data.serviceId);
-  if (activeTerms && data.acceptedTermsId !== activeTerms.id) {
-    return { ok: false, error: "Please review and accept the Terms & Conditions for this service before booking." };
+  const activeTermsByService = await Promise.all(serviceIds.map((serviceId) => getActiveServiceTerms(serviceId)));
+  const acceptedAt = new Date().toISOString();
+  const lineItems = selections.map((selection, index) => {
+    const service = selectedServices[index];
+    const variation = selection.variationId
+      ? variations.find((candidate) => candidate.id === selection.variationId && candidate.serviceId === service.id && candidate.active)
+      : undefined;
+    return {
+      selection,
+      service,
+      variation,
+      activeTerms: activeTermsByService[index],
+      price: variation?.price ?? service.priceMin,
+      durationMinutes: service.durationMinutes,
+    };
+  });
+  for (const item of lineItems) {
+    if (item.selection.variationId && !item.variation) {
+      return { ok: false, error: `The selected option for ${item.service.name} is no longer available.` };
+    }
+    if (!item.selection.variationId && data.serviceSelections?.length && variations.some((variation) => variation.serviceId === item.service.id && variation.active)) {
+      return { ok: false, error: `Please choose an available option for ${item.service.name}.` };
+    }
+    if (item.activeTerms && item.selection.acceptedTermsId !== item.activeTerms.id) {
+      return { ok: false, error: `Please review and accept the current Terms & Conditions for ${item.service.name}.` };
+    }
   }
-
-  let price = service.priceMin;
-  if (data.variationId) {
-    const [variation] = await db
-      .select()
-      .from(serviceVariations)
-      .where(eq(serviceVariations.id, data.variationId));
-    if (variation) price = variation.price;
-  }
-
-  // Server-side eligibility: the wizard only *shows* eligible professionals,
-  // but a crafted request could name any stylist ID — so re-check here.
-  if (!(await isStylistEligible(data.stylistId, data.serviceId))) {
+  // Server-side eligibility: one stylist must be assigned to every service.
+  const eligibility = await Promise.all(serviceIds.map((serviceId) => isStylistEligible(data.stylistId, serviceId)));
+  if (eligibility.some((isEligible) => !isEligible)) {
     return { ok: false, error: INELIGIBLE_STYLIST_ERROR };
   }
+  const price = lineItems.reduce((total, item) => total + item.price, 0);
+  const durationMinutes = lineItems.reduce((total, item) => total + item.durationMinutes, 0);
+  const serviceNames = lineItems.map((item) => item.service.name).join(", ");
 
   // Re-check for conflicts server-side at the moment of booking (avoid race conditions).
   const slots = await getAvailableSlots({
     stylistId: data.stylistId,
-    serviceId: data.serviceId,
+    serviceIds,
     date: data.date,
   });
   if (!slots.includes(data.time)) {
@@ -213,20 +266,20 @@ export async function createAppointment(input: z.infer<typeof bookingSchema>): P
         depositPercent: settings.depositPercent,
       })
     : 0;
-
-  const [appointment] = await db
-    .insert(appointments)
-    .values({
+  const primaryService = lineItems[0];
+  const appointmentId = crypto.randomUUID();
+  const appointmentInsert = db.insert(appointments).values({
+      id: appointmentId,
       customerId: session?.role === "customer" ? session.userId : null,
       clientId: client.id,
       customerName: data.customerName,
       customerPhone: data.customerPhone,
-      serviceId: data.serviceId,
-      variationId: data.variationId ?? null,
+      serviceId: primaryService.service.id,
+      variationId: primaryService.variation?.id ?? null,
       stylistId: data.stylistId,
       scheduledDate: data.date,
       scheduledTime: data.time,
-      durationMinutes: service.durationMinutes,
+      durationMinutes,
       priceEstimate: price,
       instructions: data.instructions || null,
       source: "online",
@@ -236,46 +289,63 @@ export async function createAppointment(input: z.infer<typeof bookingSchema>): P
       depositRequired,
       depositPaid: 0,
       balanceDue: price,
-      acceptedTermsId: activeTerms?.id ?? null,
-      acceptedTermsVersion: activeTerms?.version ?? null,
-      acceptedTermsAt: activeTerms ? new Date().toISOString() : null,
-    })
-    .returning();
+      acceptedTermsId: primaryService.activeTerms?.id ?? null,
+      acceptedTermsVersion: primaryService.activeTerms?.version ?? null,
+      acceptedTermsAt: primaryService.activeTerms ? acceptedAt : null,
+    });
 
-  await db.insert(appointmentStatusHistory).values({
-    appointmentId: appointment.id,
-    status: appointment.status,
+  const serviceLinesInsert = db.insert(appointmentServices).values(
+    lineItems.map((item, sortOrder) => ({
+      id: crypto.randomUUID(),
+      appointmentId,
+      serviceId: item.service.id,
+      variationId: item.variation?.id ?? null,
+      price: item.price,
+      durationMinutes: item.durationMinutes,
+      sortOrder,
+      acceptedTermsId: item.activeTerms?.id ?? null,
+      acceptedTermsVersion: item.activeTerms?.version ?? null,
+      acceptedTermsAt: item.activeTerms ? acceptedAt : null,
+    }))
+  );
+  const statusHistoryInsert = db.insert(appointmentStatusHistory).values({
+    appointmentId,
+    status: "pending",
     changedByUserId: session?.userId ?? null,
     changedByRole: session?.role ?? "customer",
     note: depositRequired > 0
       ? `Booking created online — awaiting GH₵${depositRequired} deposit proof review.`
       : `Booking created online — awaiting full payment proof review (GH₵${price}).`,
   });
-
-  if (data.referenceUrls?.length) {
-    await db.insert(customerReferences).values(
+  const referenceInsert = data.referenceUrls?.length
+    ? db.insert(customerReferences).values(
       data.referenceUrls.map((url) => ({
-        appointmentId: appointment.id,
+        appointmentId,
         url,
         type: url.match(/\.(mp4|mov|webm)$/i) ? ("video" as const) : ("image" as const),
       }))
-    );
+    )
+    : null;
+  if (referenceInsert) {
+    await db.batch([appointmentInsert, serviceLinesInsert, statusHistoryInsert, referenceInsert]);
+  } else {
+    await db.batch([appointmentInsert, serviceLinesInsert, statusHistoryInsert]);
   }
 
   await recordAudit({
     session,
     action: "appointment_created",
     entityType: "appointment",
-    entityId: appointment.id,
-    after: { status: "pending", stylistId: data.stylistId, date: data.date, time: data.time },
+    entityId: appointmentId,
+    after: { status: "pending", serviceIds, stylistId: data.stylistId, date: data.date, time: data.time },
   });
 
   await notify({
     userId: data.stylistId,
     type: "new_appointment",
     title: "New appointment booked",
-    body: `${data.customerName} booked ${service.name} on ${data.date} at ${data.time}.`,
-    relatedAppointmentId: appointment.id,
+    body: `${data.customerName} booked ${serviceNames} on ${data.date} at ${data.time}.`,
+    relatedAppointmentId: appointmentId,
     url: "/stylist",
   });
 
@@ -286,8 +356,8 @@ export async function createAppointment(input: z.infer<typeof bookingSchema>): P
         userId: a.id,
         type: "new_booking",
         title: "New booking",
-        body: `${data.customerName} booked ${service.name} with a stylist on ${data.date} at ${data.time}.`,
-        relatedAppointmentId: appointment.id,
+        body: `${data.customerName} booked ${serviceNames} with a stylist on ${data.date} at ${data.time}.`,
+        relatedAppointmentId: appointmentId,
         url: "/admin/appointments",
       })
     )
@@ -297,7 +367,7 @@ export async function createAppointment(input: z.infer<typeof bookingSchema>): P
   revalidatePath("/stylist");
   revalidatePath("/admin");
 
-  return { ok: true, appointmentId: appointment.id, depositRequired, priceEstimate: price };
+  return { ok: true, appointmentId, depositRequired, priceEstimate: price };
 }
 
 /** Walk-in / QR appointment: same table, marked with source, joins the live queue. */
@@ -674,10 +744,8 @@ export async function resolveCancellationRequest(params: {
   return { ok: true as const };
 }
 
-/** For range-priced services (e.g. Soft Glam GH₵200–300), staff confirm the
- * exact agreed price within the service's allowed range. Server-enforced —
- * never lets the price go outside [priceMin, priceMax], and recalculates
- * the balance due. Fully audited. */
+/** Staff may set the agreed price only within the combined range of all
+ * service lines; the shared balance is recalculated and the change audited. */
 export async function setAppointmentFinalPrice(appointmentId: string, finalPrice: number) {
   const session = await requireRole("manager", "owner", "admin", "stylist");
   const [appt] = await db.select().from(appointments).where(eq(appointments.id, appointmentId));
@@ -686,13 +754,12 @@ export async function setAppointmentFinalPrice(appointmentId: string, finalPrice
     return { ok: false as const, error: "You can only adjust the price of your own appointments." };
   }
 
-  const [service] = await db.select().from(services).where(eq(services.id, appt.serviceId));
-  if (!service) return { ok: false as const, error: "Service not found." };
-
-  const min = service.priceMin;
-  const max = service.priceMax ?? service.priceMin;
+  const serviceLines = await getAppointmentServiceLines(appt);
+  if (serviceLines.length === 0) return { ok: false as const, error: "Service not found." };
+  const min = serviceLines.reduce((total, line) => total + line.minPrice, 0);
+  const max = serviceLines.reduce((total, line) => total + line.maxPrice, 0);
   if (finalPrice < min || finalPrice > max) {
-    return { ok: false as const, error: `Price must be between GH₵${min} and GH₵${max} for ${service.name}.` };
+    return { ok: false as const, error: `Price must be between GH₵${min} and GH₵${max} for the selected services.` };
   }
 
   const newBalance = Math.max(0, finalPrice - appt.depositPaid);

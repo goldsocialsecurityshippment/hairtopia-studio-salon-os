@@ -4,6 +4,7 @@ import { eq, and } from "drizzle-orm";
 import { Card } from "@/components/ui/Card";
 import { Badge, statusTone, statusLabel } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { getAppointmentServiceLines } from "@/lib/data/appointment-services";
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -27,6 +28,13 @@ export default async function AdminOverviewPage() {
     .innerJoin(services, eq(appointments.serviceId, services.id))
     .where(eq(appointments.scheduledDate, date));
 
+  const appointmentsWithServices = await Promise.all(
+    todaysAppointments.map(async (row) => ({
+      ...row,
+      serviceName: (await getAppointmentServiceLines(row.appointment)).map((line) => line.serviceName).join(" + ") || row.serviceName,
+    }))
+  );
+
   const stylists = await db.select().from(users).where(eq(users.role, "stylist"));
   const todaysAttendance = await db.select().from(attendance).where(eq(attendance.date, date));
 
@@ -37,10 +45,10 @@ export default async function AdminOverviewPage() {
     .where(and(eq(appointments.scheduledDate, date), eq(payments.status, "paid")));
   const revenueToday = revenueRows.reduce((sum, r) => sum + r.amount, 0);
 
-  const waiting = todaysAppointments.filter((a) => ["arrived", "confirmed", "pending"].includes(a.appointment.status));
-  const inService = todaysAppointments.filter((a) => a.appointment.status === "in_service");
-  const cancelledToday = todaysAppointments.filter((a) => a.appointment.status === "cancelled").length;
-  const noShowToday = todaysAppointments.filter((a) => a.appointment.status === "no_show").length;
+  const waiting = appointmentsWithServices.filter((a) => ["arrived", "confirmed", "pending"].includes(a.appointment.status));
+  const inService = appointmentsWithServices.filter((a) => a.appointment.status === "in_service");
+  const cancelledToday = appointmentsWithServices.filter((a) => a.appointment.status === "cancelled").length;
+  const noShowToday = appointmentsWithServices.filter((a) => a.appointment.status === "no_show").length;
 
   const pendingReviewWork = await db.select().from(completedWork).where(eq(completedWork.reviewStatus, "pending_review"));
 
@@ -69,7 +77,7 @@ export default async function AdminOverviewPage() {
       <p className="mt-1 text-sm text-ink-soft">{new Date().toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</p>
 
       <div className="mt-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-        <Stat label="Appointments today" value={todaysAppointments.length} />
+        <Stat label="Appointments today" value={appointmentsWithServices.length} />
         <Stat label="Revenue today" value={`GH₵${revenueToday.toFixed(0)}`} />
         <Stat label="Staff present" value={`${staffPresent}/${stylists.length}`} />
         <Stat label="Waiting now" value={waiting.length} />
@@ -123,11 +131,11 @@ export default async function AdminOverviewPage() {
 
         <section>
           <h2 className="mb-3 font-display text-lg text-ink">Customers today</h2>
-          {todaysAppointments.length === 0 ? (
+          {appointmentsWithServices.length === 0 ? (
             <EmptyState title="No appointments yet" description="Everything is quiet so far today." />
           ) : (
             <div className="space-y-2">
-              {todaysAppointments
+              {appointmentsWithServices
                 .sort((a, b) => a.appointment.scheduledTime.localeCompare(b.appointment.scheduledTime))
                 .map(({ appointment, serviceName }) => (
                   <div key={appointment.id} className="flex items-center justify-between rounded-card border border-line bg-surface px-4 py-3">

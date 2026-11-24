@@ -4,8 +4,6 @@ import { getCurrentUser } from "@/lib/actions/auth";
 import { db } from "@/db";
 import {
   appointments,
-  services,
-  serviceVariations,
   users,
   customerReferences,
   appointmentStatusHistory,
@@ -21,6 +19,7 @@ import { CancelDialog } from "./CancelDialog";
 import { RescheduleDialog } from "./RescheduleDialog";
 import { ReviewForm } from "./ReviewForm";
 import { ReviewDisplay } from "./ReviewDisplay";
+import { getAppointmentServiceLines } from "@/lib/data/appointment-services";
 
 export default async function AppointmentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -31,10 +30,7 @@ export default async function AppointmentDetailPage({ params }: { params: Promis
   if (!appointment) notFound();
   if (user.role === "customer" && appointment.customerId !== user.id) notFound();
 
-  const [service] = await db.select().from(services).where(eq(services.id, appointment.serviceId));
-  const variation = appointment.variationId
-    ? (await db.select().from(serviceVariations).where(eq(serviceVariations.id, appointment.variationId)))[0]
-    : null;
+  const serviceLines = await getAppointmentServiceLines(appointment);
   const stylist = appointment.stylistId
     ? (await db.select().from(users).where(eq(users.id, appointment.stylistId)))[0]
     : null;
@@ -61,10 +57,21 @@ export default async function AppointmentDetailPage({ params }: { params: Promis
 
         <div className="mt-4 flex items-start justify-between">
           <div>
-            <h1 className="font-display text-2xl text-ink">{service?.name}</h1>
-            {variation && <p className="text-sm text-ink-soft">{variation.label}</p>}
+            <h1 className="font-display text-2xl text-ink">{serviceLines.map((line) => line.serviceName).join(" + ") || "Appointment"}</h1>
           </div>
           <Badge tone={statusTone(appointment.status)}>{statusLabel(appointment.status)}</Badge>
+        </div>
+
+        <div className="mt-6 rounded-card border border-line bg-surface p-5">
+          <p className="text-xs uppercase tracking-wide2 text-ink-soft">Services in this appointment</p>
+          <ul className="mt-3 space-y-2">
+            {serviceLines.map((line) => (
+              <li key={line.id} className="flex justify-between gap-4 text-sm">
+                <span className="text-ink">{line.serviceName}{line.variationLabel ? ` — ${line.variationLabel}` : ""}</span>
+                <span className="shrink-0 text-ink-soft">GH₵{line.price} · {line.durationMinutes} min</span>
+              </li>
+            ))}
+          </ul>
         </div>
 
         <div className="mt-6 grid gap-4 sm:grid-cols-2">
@@ -124,7 +131,7 @@ export default async function AppointmentDetailPage({ params }: { params: Promis
         <div className="mt-6 flex flex-wrap gap-3">
           {canArrive && <ArriveButton appointmentId={appointment.id} />}
           {canCancel && appointment.stylistId && (
-            <RescheduleDialog appointmentId={appointment.id} stylistId={appointment.stylistId} serviceId={appointment.serviceId} />
+            <RescheduleDialog appointmentId={appointment.id} stylistId={appointment.stylistId} serviceIds={serviceLines.map((line) => line.serviceId)} />
           )}
           {canCancel && <CancelDialog appointmentId={appointment.id} />}
         </div>

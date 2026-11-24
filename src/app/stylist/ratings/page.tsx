@@ -1,22 +1,25 @@
 import { getCurrentUser } from "@/lib/actions/auth";
 import { db } from "@/db";
-import { reviews, appointments, services } from "@/db/schema";
+import { reviews, appointments } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { getAppointmentServiceLines } from "@/lib/data/appointment-services";
 
 export default async function StylistRatingsPage() {
   const user = await getCurrentUser();
   if (!user) return null;
 
   const rows = await db
-    .select({ review: reviews, appointment: appointments, serviceName: services.name })
+    .select({ review: reviews, appointment: appointments })
     .from(reviews)
     .innerJoin(appointments, eq(reviews.appointmentId, appointments.id))
-    .innerJoin(services, eq(appointments.serviceId, services.id))
     .where(eq(appointments.stylistId, user.id))
     .orderBy(desc(reviews.createdAt));
 
-  const visible = rows.filter((r) => !r.review.hidden);
+  const visible = await Promise.all(rows.filter((r) => !r.review.hidden).map(async (row) => {
+    const lines = await getAppointmentServiceLines(row.appointment);
+    return { ...row, serviceName: lines.map((line) => line.serviceName).join(" + ") || "Service" };
+  }));
   const avgOverall = visible.length
     ? visible.reduce((sum, r) => sum + r.review.overallRating, 0) / visible.length
     : null;
