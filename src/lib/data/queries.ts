@@ -11,7 +11,8 @@ import {
   salonSettings,
   galleryImages,
 } from "@/db/schema";
-import { eq, and, avg, count } from "drizzle-orm";
+import { eq, and, avg, count, asc, desc, sql } from "drizzle-orm";
+import { GALLERY_IMAGE_STORAGE_PREFIX } from "@/lib/gallery-media";
 
 export async function getSettings() {
   const [settings] = await db
@@ -176,12 +177,23 @@ export async function getServiceById(serviceId: string) {
   };
 }
 
-export async function getGalleryImages() {
+export async function getGalleryImages(limit = 8) {
   const rows = await db
-    .select()
+    .select({
+      id: galleryImages.id,
+      category: galleryImages.category,
+      mediaType: galleryImages.mediaType,
+      caption: galleryImages.caption,
+      mediaUrl: sql<string>`CASE
+        WHEN ${galleryImages.mediaUrl} LIKE ${`${GALLERY_IMAGE_STORAGE_PREFIX}%`}
+        THEN '/api/gallery-images/' || ${galleryImages.id}
+        ELSE ${galleryImages.mediaUrl}
+      END`,
+    })
     .from(galleryImages)
     .where(eq(galleryImages.active, true))
-    .orderBy(galleryImages.sortOrder);
+    .orderBy(asc(galleryImages.sortOrder), desc(galleryImages.createdAt))
+    .limit(limit);
 
   return rows;
 }

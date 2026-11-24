@@ -8,6 +8,12 @@ import { recordAudit } from "@/lib/audit";
 import { notify } from "@/lib/notify";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import {
+  decodeGalleryImageDataUrl,
+  GALLERY_IMAGE_DATA_URL_PREFIX,
+  GALLERY_IMAGE_STORAGE_PREFIX,
+  MAX_GALLERY_IMAGE_DATA_URL_LENGTH,
+} from "@/lib/gallery-media";
 
 const serviceSchema = z.object({
   id: z.string().optional(),
@@ -243,7 +249,7 @@ export async function acknowledgeRule(ruleId: string) {
 /** ---------- GALLERY ---------- */
 const galleryUploadSchema = z.object({
   category: z.string().min(1, "Please choose a category."),
-  mediaUrl: z.string().min(1),
+  mediaUrl: z.string().min(1).max(MAX_GALLERY_IMAGE_DATA_URL_LENGTH),
   mediaType: z.enum(["image", "video"]).default("image"),
   caption: z.string().optional(),
 });
@@ -253,10 +259,18 @@ export async function addGalleryImage(input: z.infer<typeof galleryUploadSchema>
   const parsed = galleryUploadSchema.safeParse(input);
   if (!parsed.success) return { ok: false as const, error: parsed.error.issues[0].message };
 
+  let mediaUrl = parsed.data.mediaUrl;
+  if (mediaUrl.startsWith("data:")) {
+    if (parsed.data.mediaType !== "image" || !decodeGalleryImageDataUrl(mediaUrl)) {
+      return { ok: false as const, error: "Please upload a valid, optimized gallery image." };
+    }
+    mediaUrl = `${GALLERY_IMAGE_STORAGE_PREFIX}${mediaUrl.slice(GALLERY_IMAGE_DATA_URL_PREFIX.length)}`;
+  }
+
   const [created] = await db
     .insert(galleryImages)
-    .values({ ...parsed.data, uploadedByUserId: session.userId })
-    .returning();
+    .values({ ...parsed.data, mediaUrl, uploadedByUserId: session.userId })
+    .returning({ id: galleryImages.id });
 
   await recordAudit({
     session,

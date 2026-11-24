@@ -240,23 +240,7 @@ export default async function HomePage() {
           <div className="container-page">
             <p className="text-xs font-medium uppercase tracking-wide2 text-bronze-500">Gallery</p>
             <h2 className="mt-2 font-display text-3xl text-ink">Recent work</h2>
-            {galleryImages.length === 0 ? (
-              <>
-                <div className="mt-8 grid grid-cols-2 gap-3 md:grid-cols-4">
-                  {["Braids", "Retouch", "Styling", "Nails"].map((label) => (
-                    <div
-                      key={label}
-                      className="flex aspect-square items-center justify-center rounded-card bg-gradient-to-br from-bronze-100 to-bronze-300"
-                    >
-                      <span className="font-display text-sm tracking-wide text-bronze-700">{label}</span>
-                    </div>
-                  ))}
-                </div>
-                <p className="mt-4 text-xs text-ink-soft">
-                  The owner can upload real work photos from Admin → Gallery.
-                </p>
-              </>
-            ) : (
+            {galleryImages.length > 0 && (
               <div className="mt-8 grid grid-cols-2 gap-3 md:grid-cols-4">
                 {galleryImages.slice(0, 8).map((img) => (
                   <div key={img.id} className="group relative aspect-square overflow-hidden rounded-card">
@@ -265,8 +249,9 @@ export default async function HomePage() {
                     ) : (
                       <Image
                         src={img.mediaUrl}
-                        alt={img.caption ?? img.category}
+                        alt={img.caption ?? `${img.category} salon work`}
                         fill
+                        unoptimized
                         className="object-cover transition-transform group-hover:scale-105"
                       />
                     )}
